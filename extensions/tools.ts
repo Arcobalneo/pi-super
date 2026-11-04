@@ -4,7 +4,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { SuperRuntime, UserNotice } from "./runtime.ts";
-import type { AgentScope, DecisionKind, ReportKind, Strength, UsageStats } from "./types.ts";
+import type { AgentScope, DecisionKind, Lane, ReportKind, Strength, UsageStats } from "./types.ts";
 
 interface SuperDetails {
 	summary: string;
@@ -13,6 +13,7 @@ interface SuperDetails {
 const SCOPES = ["trusted", "bundled", "user", "project", "all"] as const;
 const STRENGTHS = ["explicit", "inferred"] as const;
 const DECISIONS = ["accept", "stop", "ignore"] as const;
+const LANES = ["code", "review", "answer"] as const;
 const REPORTS = ["progress", "waiting", "ready", "blocked", "failed", "dropped"] as const;
 
 export function registerTools(
@@ -24,12 +25,13 @@ export function registerTools(
 		name: "super_eval",
 		label: "Super eval",
 		description:
-			"Record a pi-super decision. accept creates a ticket. stop and ignore record the decision and do not create work. Inferred accepts are dropped when rules acceptInferred is false.",
-		promptSnippet: "Accept, stop, or ignore a unit of work as a pi-super ticket",
+			"Admit or refuse work. accept creates a ticket the loop will run; you do not implement it. stop and ignore record the decision and do not create work. Inferred accepts are dropped when rules acceptInferred is false.",
+		promptSnippet: "Admit, stop, or ignore work. Workers implement accepted tickets",
 		promptGuidelines: [
-			"Use super_eval before super_dispatch when the user asked for multi-step work.",
-			"Use super_eval with decision accept and strength explicit for work the user just requested.",
-			"Use super_eval with decision ignore when the request is not actionable.",
+			"Call super_eval with decision accept and strength explicit when the person just asked for work. Do not implement it yourself.",
+			"Set lane to code for a change, review for a read-only review, or answer for a question about the repo.",
+			"Call super_eval with decision ignore when the message is not a request.",
+			"After accept, confirm in one sentence and stop. The loop runs scout, planner, worker, and reviewer as the lane requires.",
 		],
 		executionMode: "sequential",
 		parameters: Type.Object({
@@ -38,6 +40,12 @@ export function registerTools(
 			strength: StringEnum(STRENGTHS, { description: "explicit when the user asked; inferred when you are guessing", default: "explicit" }),
 			decision: StringEnum(DECISIONS, { description: "accept, stop, or ignore" }),
 			reason: Type.String({ description: "Why this decision was made" }),
+			lane: Type.Optional(
+				StringEnum(LANES, {
+					description: 'code runs scout, planner, worker, and reviewer. review runs the reviewer. answer runs a read-only scout. Default "code".',
+					default: "code",
+				}),
+			),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			runtime.reloadRules(ctx.cwd);
@@ -47,6 +55,7 @@ export function registerTools(
 				reason: params.reason,
 				strength: params.strength as Strength,
 				decision: params.decision as DecisionKind,
+				lane: params.lane as Lane | undefined,
 			});
 			paint(ctx);
 			return textResult(result.text);
@@ -64,15 +73,42 @@ export function registerTools(
 	});
 
 	pi.registerTool({
+		name: "super_answer",
+		label: "Super answer",
+		description:
+			"Record the person's answer to the one open question, then stop. The loop resumes that ticket. Omit ticketId when only one question is open.",
+		promptSnippet: "Record the person's answer to the open pi-super question",
+		promptGuidelines: [
+			"Call super_answer when the person answers the open question. Then stop.",
+			"Do not admit a new ticket for that answer.",
+		],
+		executionMode: "sequential",
+		parameters: Type.Object({
+			choice: Type.String({ description: "The option number or the option text." }),
+			ticketId: Type.Optional(Type.String({ description: "Ticket id. Omit when only one question is open." })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const result = runtime.answer(params.ticketId, params.choice);
+			paint(ctx);
+			return textResult(result.ok ? `${result.message} Stop. The loop continues if the ticket can run.` : result.message, !result.ok);
+		},
+		renderCall(args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("super_answer ")) + theme.fg("accent", args.choice), 0, 0);
+		},
+		renderResult(result) {
+			return new Text(textOf(result.content), 0, 0);
+		},
+	});
+
+	pi.registerTool({
 		name: "super_dispatch",
 		label: "Super dispatch",
 		description:
-			"Run open pi-super tickets in subprocess agents (worker by default). No ids runs every auto-runnable ticket. ticketId runs one ticket. tasks runs those tickets. chain runs scout/planner/worker style steps for one ticketId; only the last step's pi-super fence is applied. {previous} is replaced with the prior step's text.",
-		promptSnippet: "Dispatch pi-super tickets to isolated subagents",
+			"Run open tickets in isolated worker processes. The Router loop does this itself; call it only when the loop is off. No ids runs every auto-runnable ticket through its lane. chain runs explicit steps for one ticketId; {previous} is the prior step's text. A role stops the chain when it asks or fails.",
+		promptSnippet: "Run pi-super tickets in isolated workers when the loop is off",
 		promptGuidelines: [
-			"Use super_dispatch with no arguments to run tickets that are ready for an agent.",
-			"Use super_dispatch chain with ticketId for scout, then planner, then worker. Put {previous} in later step tasks.",
-			"Do not call super_dispatch while plan mode is on or while a ticket needs a person.",
+			"Do not call super_dispatch while the Router loop is on. The loop runs workers after super_eval.",
+			"Do not call super_dispatch in plan mode or while a ticket needs a person.",
 		],
 		executionMode: "sequential",
 		parameters: Type.Object({
@@ -138,11 +174,11 @@ export function registerTools(
 		name: "super_report",
 		label: "Super report",
 		description:
-			"Record a report for a ticket the orchestrator handled itself. ready ends the ticket. An ask blocks the ticket until /super answer. failed and blocked wait for a person. dropped ends the ticket quietly.",
-		promptSnippet: "Record a pi-super report without a subagent",
+			"Record a report without a worker. Use it to ask the person one question. ready ends the ticket. An ask waits for super_answer. failed waits for the person. dropped ends the ticket quietly. Do not use this to implement the ticket.",
+		promptSnippet: "Ask the person one question, or record a Router report",
 		promptGuidelines: [
-			"Use super_report when you finished a ticket yourself instead of calling super_dispatch.",
-			"Use super_report ask when a person must choose. Then stop.",
+			"Use super_report with an ask when one decision is required before work can start. Then stop.",
+			"Do not use super_report to claim that you implemented the work.",
 		],
 		executionMode: "sequential",
 		parameters: Type.Object({

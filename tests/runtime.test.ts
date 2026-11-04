@@ -44,7 +44,11 @@ function setup(script: (task: string) => SubagentResult) {
 		runAgent: async (request) => script(request.task),
 	});
 	runtime.beginSession([], root);
-	return { runtime, entries, files, rulesPath };
+	return { runtime, entries, files, rulesPath, agents };
+}
+
+function writeRole(dir: string, name: string): void {
+	writeFileSync(join(dir, `${name}.md`), `---\nname: ${name}\ndescription: ${name} role\n---\nYou are a ${name}.\n`);
 }
 
 describe("runtime", () => {
@@ -134,6 +138,79 @@ describe("runtime", () => {
 		runtime.reloadRules("/tmp");
 		expect(runtime.rules.hopLimit).toBe(2);
 		expect(runtime.rulesError).toMatch(/JSON/);
+	});
+
+	it("runs the lane once per round and stops when a role asks", async () => {
+		const seen: string[] = [];
+		const { runtime, agents } = setup((task) => {
+			seen.push(task);
+			if (task.includes("Map the files")) {
+				return result("src/greet.ts\n```pi-super\n{\"report\":\"ask\",\"summary\":\"Which name?\",\"ask\":{\"title\":\"Name?\",\"text\":\"Which greeting name?\",\"options\":[\"Ada\",\"Lin\"]}}\n```");
+			}
+			return result("should not run");
+		});
+		for (const name of ["scout", "planner", "worker", "reviewer"]) writeRole(agents, name);
+		runtime.evalDecision({ title: "Greet", scope: "Update greet", strength: "explicit", decision: "accept", reason: "user asked", lane: "code" });
+		const report = await runtime.dispatch({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto" });
+		expect(report.dispatched).toBe(1);
+		expect(seen).toHaveLength(1);
+		expect(runtime.state.tickets[0]?.hops).toBe(1);
+		expect(runtime.state.tickets[0]?.attention?.title).toBe("Name?");
+		expect(report.needsModel).toBe(true);
+	});
+
+	it("counts a full code pipeline as one hop and delivers only the review", async () => {
+		let calls = 0;
+		const { runtime, agents } = setup((task) => {
+			calls += 1;
+			if (task.includes("Review the result")) {
+				return result("Looks good.\n```pi-super\n{\"report\":\"ready\",\"summary\":\"Greeting updated.\"}\n```");
+			}
+			return result(`step ${calls} notes`);
+		});
+		for (const name of ["scout", "planner", "worker", "reviewer"]) writeRole(agents, name);
+		runtime.armLoop();
+		runtime.evalDecision({ title: "Greet", scope: "Update greet", strength: "explicit", decision: "accept", reason: "user asked" });
+		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(calls).toBe(4);
+		expect(runtime.state.tickets[0]?.hops).toBe(1);
+		expect(runtime.state.tickets[0]?.status).toBe("ended");
+		expect(drained.needsModel).toBe(true);
+		expect(drained.speech).toContain("Greeting updated.");
+		expect(drained.speech).toContain("Do not call tools");
+		const again = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(again.dispatched).toBe(0);
+		expect(again.needsModel).toBe(false);
+	});
+
+	it("reports the hop limit instead of narrating progress", async () => {
+		const { runtime, files, rulesPath } = setup(() => result('```pi-super\n{"report":"progress","summary":"still going"}\n```'));
+		files.set(rulesPath, '{"hopLimit":1}');
+		runtime.armLoop();
+		runtime.evalDecision({ title: "Loop", scope: "Keep going", strength: "explicit", decision: "accept", reason: "user asked" });
+		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(drained.needsModel).toBe(true);
+		expect(drained.speech).toContain("hop limit");
+		expect(drained.speech).not.toContain("still going");
+	});
+
+	it("resumes a ticket after the person answers", async () => {
+		let calls = 0;
+		const { runtime } = setup(() => {
+			calls += 1;
+			if (calls === 1) {
+				return result('```pi-super\n{"report":"ask","summary":"Need a choice","ask":{"title":"Ship?","text":"How?","options":["PR","Patch"],"key":"ship"}}\n```');
+			}
+			return result('```pi-super\n{"report":"ready","summary":"Patched."}\n```');
+		});
+		runtime.armLoop();
+		runtime.evalDecision({ title: "Ship", scope: "Ship it", strength: "explicit", decision: "accept", reason: "user asked" });
+		await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(runtime.answer(undefined, "2").message).toContain("Patch");
+		const resumed = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(calls).toBe(2);
+		expect(resumed.speech).toContain("Patched.");
+		expect(runtime.state.tickets[0]?.status).toBe("ended");
 	});
 
 	it("blocks an ask-first assignment until the person answers", async () => {

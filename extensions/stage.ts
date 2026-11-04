@@ -1,23 +1,27 @@
 import type { Stage, SuperRules, SuperState, Ticket } from "./types.ts";
 
-/** First matching row wins. `ready` and `dropped` end the ticket, so they are not stages. */
+/**
+ * First matching row wins.
+ * admit → dispatch → running, then ready / ask / later / failed.
+ * A completed ticket stays visible as `ready`. Stop and drop are `ended`.
+ */
 export function ticketStage(ticket: Ticket): Stage {
-	if (ticket.status === "ended") return "ended";
-	if (ticket.attention) return "person/answer";
+	if (ticket.status === "ended") return ticket.outcome === "completed" ? "ready" : "ended";
+	if (ticket.attention) return "ask";
+	if (ticket.assignment?.status === "running") return "running";
 	const kind = ticket.assignment?.reportKind;
-	if (kind === "blocked" || kind === "failed") return "person/blocked";
-	if (ticket.assignment?.status === "running") return "working";
-	if (ticket.assignment?.status === "pending") return "working/queued";
-	if (kind === "waiting" || kind === "ready" || kind === "dropped") return "idle";
-	if (kind === "progress" || kind === undefined) return "working";
-	return "idle";
+	if (kind === "blocked" || kind === "failed") return "failed";
+	if (kind === "waiting") return "later";
+	if (ticket.later.length > 0 && kind !== "progress") return "later";
+	if (!ticket.assignment) return "admit";
+	return "dispatch";
 }
 
 export function isAutoRunnable(ticket: Ticket, hopLimit: number): boolean {
 	if (ticket.status !== "open" || ticket.hops >= hopLimit) return false;
 	if (ticket.assignment?.status === "running") return false;
 	const stage = ticketStage(ticket);
-	return stage === "working" || stage === "working/queued";
+	return stage === "admit" || stage === "dispatch";
 }
 
 export function isManualRunnable(ticket: Ticket, hopLimit: number, ignoreHopLimit = false): boolean {
@@ -25,13 +29,13 @@ export function isManualRunnable(ticket: Ticket, hopLimit: number, ignoreHopLimi
 	if (ticket.assignment?.status === "running") return false;
 	if (!ignoreHopLimit && ticket.hops >= hopLimit) return false;
 	const stage = ticketStage(ticket);
-	return stage === "working" || stage === "working/queued" || stage === "idle" || stage === "person/blocked";
+	return stage === "admit" || stage === "dispatch" || stage === "failed" || stage === "later";
 }
 
 export function personTickets(state: SuperState): Ticket[] {
 	return state.tickets.filter((ticket) => {
 		const stage = ticketStage(ticket);
-		return stage === "person/answer" || stage === "person/blocked";
+		return stage === "ask" || stage === "failed";
 	});
 }
 
@@ -39,7 +43,7 @@ export function personTickets(state: SuperState): Ticket[] {
 export function hopLimited(ticket: Ticket, hopLimit: number): boolean {
 	if (ticket.status !== "open" || ticket.attention || ticket.hops < hopLimit) return false;
 	const stage = ticketStage(ticket);
-	return stage === "working" || stage === "working/queued" || stage === "idle";
+	return stage === "admit" || stage === "dispatch" || stage === "later";
 }
 
 export function selectTickets(
@@ -75,7 +79,7 @@ export function statusLine(state: SuperState, rules: SuperRules): string | undef
 	if (!state.planMode && !state.loopArmed && open.length === 0) return undefined;
 	const parts = ["super"];
 	if (state.planMode) parts.push("plan");
-	if (state.loopArmed) parts.push("loop");
+	if (state.loopArmed) parts.push("router");
 	if (open.length > 0) parts.push(`${open.length} open`);
 	if (needs.length > 0) parts.push(`${needs.length} needs you`);
 	else if (state.loopArmed && open.length === 0) parts.push("idle");
@@ -90,17 +94,20 @@ export function widgetLines(state: SuperState, rules: SuperRules, rulesError?: s
 		lines.push(`${ticket.id} hop limit (${ticket.hops}/${rules.hopLimit}): ${ticket.assignment?.summary ?? ticket.title}`);
 		lines.push(`  /super run ${ticket.id}    /super stop ${ticket.id}`);
 	}
+	const asks = personTickets(state).filter((ticket) => ticket.attention);
+	const first = asks[0];
+	if (first?.attention) {
+		const options = first.attention.options.map((option, index) => `${index + 1}. ${option}`).join("  ");
+		lines.push(`${first.id} needs you: ${first.attention.title}`);
+		lines.push(`  ${first.attention.text}`);
+		lines.push(`  ${options}`);
+		lines.push(`  /super answer ${first.id} <n>`);
+		if (asks.length > 1) lines.push(`${asks.length - 1} more question(s) waiting`);
+	}
 	for (const ticket of personTickets(state)) {
-		if (ticket.attention) {
-			const options = ticket.attention.options.map((option, index) => `${index + 1}. ${option}`).join("  ");
-			lines.push(`${ticket.id} needs you: ${ticket.attention.title}`);
-			lines.push(`  ${ticket.attention.text}`);
-			lines.push(`  ${options}`);
-			lines.push(`  /super answer ${ticket.id} <n>`);
-		} else {
-			lines.push(`${ticket.id} blocked: ${ticket.assignment?.summary ?? "failed"}`);
-			lines.push(`  /super run ${ticket.id}    /super stop ${ticket.id}`);
-		}
+		if (ticket.attention) continue;
+		lines.push(`${ticket.id} failed: ${ticket.assignment?.summary ?? "failed"}`);
+		lines.push(`  /super run ${ticket.id}    /super stop ${ticket.id}`);
 	}
 	return lines;
 }

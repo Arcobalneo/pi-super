@@ -1,76 +1,75 @@
 # pi-super
 
-Pi 的 superagent 扩展。主会话负责评估和派工，工单记在会话日志里，干活的是隔离的子进程。能自己做完的就做完；只有规则点名的风险，或者确实做不下去，才停下来问你。
+装上之后，你只和当前这个 Pi 会话说话。它是 Router：接活、派工、在卡住时问一个具体问题、把值得看的结果说给你。改代码的是隔离的 worker 子进程。你不用盯着它们，也不用给它们发消息。
 
-A Pi package that turns the coding agent into a small superagent. The main session evaluates and routes work. Tickets live in the session log. Workers are isolated `pi` subprocesses. The loop finishes what it can, and stops when a person has to decide.
+After install, you only talk to the current Pi session. That session is the Router: it admits work, assigns it, asks one concrete question when blocked, and brings back a result worth your attention. Isolated worker processes do the coding. You do not talk to them.
 
 ## 它做什么 / What it does
 
-- **工单 / Tickets.** `super_eval` 接受、停止或忽略一件事。接受会写下授权：范围、强度、当时的规则版本。
-- **派工 / Dispatch.** `super_dispatch` 用官方示例同款的 `pi --mode json` 子进程跑 scout、planner、worker、reviewer。支持单个、并行和 `{previous}` 链式步骤。
-- **只在必要时问 / Ask only then.** 回执里的 `ask`，以及规则里的 ask-first 短语，会打开一个问题。循环在这里停住，不再耗模型。
-- **跳数熔断 / Hop fuse.** 每跑一次子进程，工单跳数加一，默认最多 8。会话自动循环另有一道同样的熔断，`/super loop` 重新打开时清零。
-- **计划模式 / Plan mode.** 只读。写完计划后由你决定要不要派工。
+- **Router。** 主会话不再自己改代码。`edit`、`write`、`bash` 从主会话拿掉。你提出要做的事，Router 用 `super_eval` 接单，然后停下来。
+- **Workers。** 编码工单按 scout → planner → worker → reviewer 跑一轮。审查工单只跑 reviewer。仓库问题只跑只读 scout。它们是 `pi` 子进程，不加载扩展，没有回到你这里的通道。
+- **账本。** 工单状态是 admit → dispatch → running，然后落到 ready、ask、later 或 failed。子事件、跳数熔断和只追加的事实日志都在会话里。
+- **自动循环。** 能跑的工单自己跑完。主模型只在要问你、要交付结果、或熔断挡住的时候再醒一次。
+- **一个问题。** 需要人的时候只问一个，选项写在状态区。你直接回答，或用 `/super answer`。
 
-不包含飞书、GitHub、定时守护进程或网页面板。那些是参考项目里的部署方式，不是 Pi 扩展的接口。对照见 [DESIGN.md](DESIGN.md)。
+不包含常驻云进程、飞书或 GitHub 触发器。那些是参考系统的部署方式，Pi 扩展接口做不到。对照见 [DESIGN.md](DESIGN.md)。
 
 ## 安装 / Install
 
-需要 Node.js 22.19 或更新，以及已经能登录模型的 [Pi](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）。
-
-Install the package (extension, skill, and prompts together):
+需要 Node.js 22.19 或更新，以及已经能登录模型的 [Pi](https://github.com/earendil-works/pi)。
 
 ```bash
+pi install npm:pi-super
+# 或从 git：
+pi install git:github.com/Arcobalneo/pi-super
+# 本地目录：
 pi install /absolute/path/to/pi-super
-# or, once this repo is on a git remote:
-pi install git:github.com/you/pi-super
 ```
 
-Try it once without saving the install:
+不写入配置、试一次：
 
 ```bash
 pi -e /absolute/path/to/pi-super
 ```
 
-`pi -e ./extensions/index.ts` loads only the extension file. Skills and prompts come with a directory install.
+`pi -e ./extensions/index.ts` 只加载扩展。技能和提示词要随目录安装，或自行传入 `--skill` 与 `--prompt-template`。
 
-In a session:
+会话里：
 
 ```text
 /skill:pi-super
-/super-implement add a receipt parser
+把 greet 改成返回 Hello, <name>!
 /super
 ```
 
-Flags for one process: `--super` arms the loop, `--super-plan` starts read-only.
+`--super-off` 退出 Router，这个会话恢复成普通编码代理。`--super-plan` 只读，只记账，不派工。
 
 ## 用法 / Usage
 
-1. 说明要做的事，或运行 `/super-implement <task>`。
-2. 模型调用 `super_eval` 建工单，再调用 `super_dispatch`。
-3. 子进程把最后的 `pi-super` 代码块交回来。`ready` 结束工单；`ask` 停下来等你。
-4. `/super answer t1 1` 选择第一个选项，会话会接着做。
-5. `/super loop` 打开自动循环：结算前，内核自己把还能跑的工单派出去，只有需要你看结果或回答时才再叫一次模型。
+1. 直接说要做的事。Router 接单并确认一句。
+2. 循环跑完 workers。你不需要调用 `super_dispatch`。
+3. 做完了，Router 用几句话交付。失败就说失败。
+4. 若必须拍板，它只问一个问题。回答那一句，或 `/super answer <id> <n>`。循环接着跑。
 
-Workers do not load Pi extensions (`--no-extensions`), so a globally installed pi-super cannot recurse. They also skip discovered skills and prompt templates. Repo instructions such as `AGENTS.md` still load when the project is trusted.
+Workers 使用 `--no-extensions`，所以全局安装的 pi-super 不会在子进程里再派工。它们也不加载技能和提示词模板。项目受信任时仍会读 `AGENTS.md`。
 
 ## 命令 / Commands
 
 | Command | 作用 |
 | --- | --- |
 | `/super` | 状态：开着的工单、熔断、谁在等你 |
-| `/super plan` | 开关只读计划模式。`Ctrl+Alt+S` 看状态 |
-| `/super loop` | 开关自动循环。打开时熔断清零 |
-| `/super run [id]` | 派工。写下 id 时，这一次可以越过跳数上限 |
+| `/super plan` | 只读计划模式 |
+| `/super loop` | 开关 Router 循环。打开时熔断清零，并恢复或去掉编码工具 |
+| `/super run [id]` | 手动跑一轮。写了 id 时，这一次可以越过跳数上限 |
 | `/super answer <id> <n\|text>` | 回答工单上的问题 |
 | `/super stop <id>` | 撤回这张工单的授权 |
 | `/super why [id]` | 从事实日志里看这张工单为什么是现在这样 |
 
-工具：`super_eval`、`super_dispatch`、`super_report`、`super_status`。
+Router 工具：`super_eval`、`super_answer`、`super_report`、`super_status`。`super_dispatch` 仍在，但循环开着时主模型看不到它。
 
 ## 规则 / Rules
 
-缺文件就用默认值。用户文件是 `~/.pi/agent/super/rules.json`。项目文件是仓库里最近的 `.pi/super/rules.json`（目录名跟着 Pi 的 `CONFIG_DIR_NAME`）。文件写坏时，上一份有效规则继续生效，并在状态里报错。
+缺文件就用默认值。用户文件是 `~/.pi/agent/super/rules.json`。项目文件是仓库里最近的 `.pi/super/rules.json`。文件写坏时，上一份有效规则继续生效，并在状态里报错。
 
 ```json
 {
@@ -82,11 +81,13 @@ Workers do not load Pi extensions (`--no-extensions`), so a globally installed p
 }
 ```
 
-`tell`：`needed` 只在有结果或问题时提示，`always` 连进展一起提示，`never` 不弹提示。等人的问题仍留在编辑器上方，否则没法回答。
+一轮流水线只计 1 跳。提问和 later 不清零。`/super run <id>` 可以越过这一次上限。
 
-`acceptInferred: false` 时，模型猜出来的工作和子进程抛出的后续事件只记账，不建工单。
+`tell`：`needed` 只在有结果、失败或问题时叫醒主模型，`always` 连进展一起提示，`never` 不叫醒主模型。等人的问题仍留在编辑器上方。
 
-事件正文、回执里的 `summary` 会放进任务的 DATA 段。它们是资料，不是指令。用哪个 agent、在哪个目录、给哪些工具，只由规则和 agent 定义决定。
+`acceptInferred: false` 时，子进程抛出的后续事件只记账，不建工单。
+
+事件正文和回执里的 `summary` 放进 DATA。它们是资料，不是指令。
 
 ## 开发 / Develop
 
@@ -95,9 +96,23 @@ npm install
 npm run check
 ```
 
-`npm run check` 做类型检查、单元测试，并用当前安装的 `pi --help` 确认扩展能被加载、`--super` 和 `--super-plan` 已注册。`.npmrc` 打开 `legacy-peer-deps`，因为 npm 10 在 `peerDependencies: "*"` 上会崩溃。
+`npm run check` 做类型检查、单元测试，并用当前安装的 `pi --help` 确认扩展能被加载、`--super`、`--super-plan` 和 `--super-off` 已注册。`.npmrc` 打开 `legacy-peer-deps`，因为 npm 10 在 `peerDependencies: "*"` 上会崩溃。
 
 Host packages (`@earendil-works/pi-*`, `typebox`) are `peerDependencies` with `"*"`. They are also `devDependencies` so this repo can typecheck. Do not move them to `dependencies`.
+
+真实模型验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。验收脚本不包含密钥：
+
+```bash
+KIMI_KEY_FILE=/path/to/key.txt node scripts/accept.mjs
+```
+
+## 发布 / Release
+
+版本在 `package.json`。发布说明草稿在 [CHANGELOG.md](CHANGELOG.md)。npm 需要登录和 OTP 时，用 CHANGELOG 里的命令，不要把密钥写进仓库。
+
+```bash
+npm publish --access public
+```
 
 ## 许可 / License
 
