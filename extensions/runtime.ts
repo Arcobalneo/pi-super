@@ -1,7 +1,9 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { discoverAgents } from "./agents.ts";
 import { asksFirst, planModeTools } from "./gate.ts";
 import { interpretOutput, type Interpreted } from "./receipt.ts";
-import { groundedSpeech, nextPhase, pipelineFor, routerTools } from "./router.ts";
+import { groundedSpeech, missingAcceptanceLiterals, nextPhase, pipelineFor, routerTools } from "./router.ts";
 import { DEFAULT_RULES, policyVersion, readRulesText } from "./rules.ts";
 import { addUsage, emptyUsage, mapPool, type SubagentRequest } from "./runner.ts";
 import { factsFromEntries, nextId, project, reduce } from "./state.ts";
@@ -98,6 +100,7 @@ export class SuperRuntime {
 	acceptedThisRun = 0;
 	admitNudged = false;
 	spokeThisRun = false;
+	openedQuestionThisRun = false;
 	userPrompt = "";
 	private toolsBeforeRouter?: string[];
 	private abort = new AbortController();
@@ -114,6 +117,7 @@ export class SuperRuntime {
 		this.acceptedThisRun = 0;
 		this.admitNudged = false;
 		this.spokeThisRun = false;
+		this.openedQuestionThisRun = false;
 		this.state = project(factsFromEntries(entries));
 		this.reloadRules(cwd);
 	}
@@ -169,6 +173,7 @@ export class SuperRuntime {
 		this.userPrompt = prompt;
 		this.admitNudged = false;
 		this.spokeThisRun = false;
+		this.openedQuestionThisRun = false;
 	}
 
 	/** One nudge per user message when the Router records nothing. */
@@ -371,6 +376,8 @@ export class SuperRuntime {
 		}
 		const report = this.combine(pieces, request.hasUI === true);
 		const asks = pieces.filter((item) => item.needsPerson && item.evidence.trim());
+		const openAsk = asks[0] ? undefined : this.openedQuestionThisRun ? this.state.tickets.find((ticket) => ticket.attention) : undefined;
+		const shownQuestion = Boolean(asks[0] || openAsk?.attention);
 		const hopTickets = this.state.tickets.filter((ticket) => hopLimited(ticket, this.rules.hopLimit));
 		const speech = groundedSpeech({
 			results: pieces
@@ -383,12 +390,26 @@ export class SuperRuntime {
 						evidence: asks[0].evidence,
 						options: asks[0].askOptions ?? [],
 					}
-				: undefined,
-			extraQuestions: Math.max(0, this.state.tickets.filter((ticket) => ticket.attention).length - (asks[0] ? 1 : 0)),
+				: openAsk?.attention
+					? {
+							id: openAsk.id,
+							title: openAsk.attention.title,
+							evidence: openAsk.attention.text,
+							options: openAsk.attention.options,
+						}
+					: undefined,
+			extraQuestions: Math.max(0, this.state.tickets.filter((ticket) => ticket.attention).length - (shownQuestion ? 1 : 0)),
 			capped,
 			hopNote:
 				hopTickets.length > 0 && pieces.length > 0
-					? hopTickets.map((ticket) => `${ticket.id} reached ${ticket.hops} of ${this.rules.hopLimit} hops.`).join(" ")
+					? hopTickets
+							.map((ticket) => {
+								const mismatch = ticket.assignment?.summary?.startsWith("Missing acceptance literal")
+									? ` ${ticket.assignment.summary}`
+									: "";
+								return `${ticket.id} reached ${ticket.hops} of ${this.rules.hopLimit} hops.${mismatch}`;
+							})
+							.join(" ")
 					: undefined,
 		});
 		report.needsModel = false;
@@ -569,9 +590,23 @@ export class SuperRuntime {
 			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId });
 			return piece(ticket.id, `${ticket.id} failed: ${summary}`, false, true, emptyUsage(), "");
 		}
-		const interpreted = result.aborted
+		let interpreted: Interpreted = result.aborted
 			? { report: "failed" as const, summary: "aborted", events: [] }
 			: interpretOutput(result.text, result.exitCode, result.stderr || result.errorMessage || "");
+		if (
+			override?.interpret !== "gate" &&
+			interpreted.report === "ready" &&
+			(ticket.lane === "code" || ticket.lane === "review")
+		) {
+			const missing = missingAcceptanceLiterals(ticket.scope, readCorpus(request.cwd));
+			if (missing.length > 0) {
+				interpreted = {
+					report: "progress",
+					summary: `Missing acceptance literal: ${missing.map((item) => JSON.stringify(item)).join(", ")}.`,
+					events: [],
+				};
+			}
+		}
 		const hard = Boolean(interpreted.ask) || interpreted.report === "failed" || interpreted.report === "blocked";
 		if (override?.interpret === "gate" && !hard) {
 			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId });
@@ -743,9 +778,50 @@ export class SuperRuntime {
 	}
 
 	private apply(fact: Fact): void {
+		if (fact.type === "attention.opened") this.openedQuestionThisRun = true;
 		this.state = reduce(this.state, fact);
 		this.host.appendEntry(ENTRY_TYPE, fact);
 	}
+}
+
+function readCorpus(cwd: string): string {
+	const chunks: string[] = [];
+	let total = 0;
+	const skip = new Set([".git", "node_modules", "dist", "coverage"]);
+	const walk = (dir: string, depth: number) => {
+		if (depth > 6 || total > 400_000) return;
+		let names: string[] = [];
+		try {
+			names = readdirSync(dir);
+		} catch {
+			return;
+		}
+		for (const name of names) {
+			if (skip.has(name)) continue;
+			const path = join(dir, name);
+			let info: ReturnType<typeof statSync>;
+			try {
+				info = statSync(path);
+			} catch {
+				continue;
+			}
+			if (info.isDirectory()) {
+				walk(path, depth + 1);
+				continue;
+			}
+			if (!info.isFile() || info.size <= 0 || info.size > 200_000) continue;
+			try {
+				const text = readFileSync(path, "utf8");
+				if (text.includes("\0")) continue;
+				chunks.push(text);
+				total += text.length;
+			} catch {
+				// Unreadable files are not acceptance evidence.
+			}
+		}
+	};
+	walk(cwd, 0);
+	return chunks.join("\n");
 }
 
 interface Piece {

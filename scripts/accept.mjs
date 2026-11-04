@@ -23,8 +23,9 @@ const agentDir = join(tmpdir(), "pi-super-accept-agent");
 rmSync(agentDir, { recursive: true, force: true });
 mkdirSync(agentDir, { recursive: true });
 
-const cents = await runCents();
-const ask = await runAsk();
+const only = process.env.ACCEPT_ONLY;
+const cents = only === "ask" ? undefined : await runCents();
+const ask = only === "cents" ? undefined : await runAsk();
 const summary = { cents, ask };
 const rendered = JSON.stringify(summary, null, 2);
 if (rendered.includes(key)) {
@@ -32,7 +33,9 @@ if (rendered.includes(key)) {
 	process.exit(2);
 }
 console.log(rendered);
-process.exit(cents.ok && ask.ok ? 0 : 1);
+const centsOk = cents === undefined || cents.ok;
+const askOk = ask === undefined || ask.ok;
+process.exit(centsOk && askOk ? 0 : 1);
 
 async function runCents() {
 	const repo = join(tmpdir(), "pi-super-accept-cents");
@@ -71,7 +74,13 @@ async function runCents() {
 	const speech = lastReceiptMessage(run.events);
 	const extras = quotesOutside(speech, receipt);
 	return {
-		ok: behavior.status === 0 && extras.length === 0 && run.agents.includes("reviewer") && speech.includes(receipt),
+		ok:
+			behavior.status === 0 &&
+			extras.length === 0 &&
+			["$1.99", "$0.05", "-$0.40"].every((bit) => test.includes(bit)) &&
+			run.agents.includes("reviewer") &&
+			receipt.length > 0 &&
+			speech.includes(receipt),
 		exitCode: run.exitCode,
 		agents: run.agents,
 		hops: run.hops,
@@ -104,6 +113,7 @@ async function runAsk() {
 		"Do not write the file until I answer.",
 	].join(" ");
 	const first = await runPi(repo, sessionDir, "ask", prompt, 8 * 60 * 1000);
+	const firstSpeech = lastReceiptMessage(first.events);
 	const askedEarly = existsSync(join(repo, "src", "pace.ts"));
 	const questions = first.facts.filter((fact) => fact.type === "attention.opened");
 	const question = questions[0]?.attention;
@@ -115,10 +125,16 @@ async function runAsk() {
 			first.exitCode === 0 &&
 			questions.length === 1 &&
 			question?.options?.length === 2 &&
+			question?.options?.[0] === "keep" &&
+			question?.options?.[1] === "double" &&
 			!askedEarly &&
 			second.tools.includes("super_answer") &&
 			doubled &&
-			second.questionsSpoken <= 1,
+			second.questionsSpoken <= 1 &&
+			firstSpeech.includes(question?.text ?? "missing") &&
+			firstSpeech.includes("1. keep") &&
+			firstSpeech.includes("2. double") &&
+			!firstSpeech.includes("other question"),
 		firstExit: first.exitCode,
 		questions: questions.map((fact) => ({
 			title: fact.attention?.title,
@@ -128,7 +144,7 @@ async function runAsk() {
 		wroteBeforeAnswer: askedEarly,
 		resumedWith: second.tools,
 		pace,
-		speech: lastReceiptMessage(first.events),
+		speech: firstSpeech,
 		logPaths: [first.logPath, second.logPath],
 	};
 }

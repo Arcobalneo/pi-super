@@ -9,7 +9,7 @@ import { buildSubagentArgs, resolvePiCommand } from "../extensions/pi-command.ts
 import { interpretOutput, parseReceipt } from "../extensions/receipt.ts";
 import { DEFAULT_RULES, loadRules, policyVersion, readRulesText } from "../extensions/rules.ts";
 import { factsFromEntries, nextId, parseFact, project } from "../extensions/state.ts";
-import { groundedSpeech, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
+import { acceptanceLiterals, groundedSpeech, missingAcceptanceLiterals, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
 import { hopLimited, isAutoRunnable, selectTickets, ticketStage, widgetLines } from "../extensions/stage.ts";
 import { buildTask, parseSuperArgs } from "../extensions/task.ts";
 import type { SuperState, Ticket } from "../extensions/types.ts";
@@ -196,6 +196,10 @@ describe("gates and commands", () => {
 		expect(asked).toContain("1. PR\n2. Patch");
 		expect(asked).toContain("1 other question");
 		expect(asked).not.toContain("production");
+		const scope = 'formatCents(199) === "$1.99" and formatCents(5) === "$0.05"';
+		expect(acceptanceLiterals(scope)).toEqual(["$1.99", "$0.05"]);
+		expect(acceptanceLiterals('options are "keep" and "double"')).toEqual([]);
+		expect(missingAcceptanceLiterals(scope, 'assert.equal(formatCents(5), "$0.05");')).toEqual(["$1.99"]);
 	});
 
 	it("resolves the pi command the way the official subagent example does", () => {

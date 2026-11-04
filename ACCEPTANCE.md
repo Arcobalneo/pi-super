@@ -1,81 +1,95 @@
 # Acceptance
 
-Recorded 2026-11-04 against Pi `@earendil-works/pi-coding-agent@1.5.0` and Kimi model `kimi-for-coding` (K2.8 Preview) on `https://api.kimi.com/coding/v1`. The provider id in Pi is `kimi-coding`. The API key was supplied only as `KIMI_API_KEY` on the pi process. It is not in this file, the fixtures, or git.
+Recorded 2026-11-04 against Pi `@earendil-works/pi-coding-agent@1.5.0` and Kimi `kimi-for-coding` (K2.8 Preview) at `https://api.kimi.com/coding/v1`. The provider id in Pi is `kimi-coding`. The API key was only `KIMI_API_KEY` on the pi process. It is not in this file.
 
-## Commands
-
-`npm run check` passed: `tsc --noEmit` and vitest, 29 tests. The load test runs `pi --no-extensions -e ./extensions/index.ts --help` and sees `--super`, `--super-plan`, and `--super-off`.
-
-End-to-end, from a checkout of this package:
+`npm run check` is green: typecheck and 32 tests. The load test sees `--super`, `--super-plan`, and `--super-off`.
 
 ```bash
 KIMI_KEY_FILE=/path/to/key.txt node scripts/accept.mjs
+KIMI_KEY_FILE=/path/to/key.txt ACCEPT_ONLY=ask node scripts/accept.mjs
 ```
 
-The script creates a throwaway git repo, points `PI_CODING_AGENT_DIR` at an empty temp directory, and runs:
+Overall: the one-question resume **passed**. The harder coding task **failed** the independent behavior check. Details below.
 
-```bash
-pi --no-extensions -e ./extensions/index.ts \
-  --skill ./skills/pi-super \
-  --prompt-template ./prompts \
-  --model kimi-coding/kimi-for-coding \
-  --thinking low \
-  --approve --mode json -p -- \
-  "Change greet so it returns exactly Hello, then the name, then an exclamation mark. Add src/greet.test.ts that uses node:test and node:assert/strict. The test must check greet(\"Ada\") === \"Hello, Ada!\". Do not add dependencies. Do not commit. Do not ask a question unless the mandate is impossible."
+## One question, then super_answer — pass
+
+Prompt: add `src/pace.ts` exporting `pace(n: number): number`, but do not choose whether it returns `n` or `n * 2`. Ask one question whose only options are `keep` and `double`. Do not write the file until the person answers.
+
+The Router called `super_eval` and `super_report`. It did not write `src/pace.ts`. The shown text was the receipt, not a paraphrase:
+
+```text
+From the worker receipt:
+t1 needs you: pace(n) behavior
+Should pace(n) return n as-is, or n doubled?
+1. keep
+2. double
 ```
 
-pi exited 0. The script then exited 0.
+One attention, opened 2026-11-04T06:51:22Z. No second question.
 
-## What the person saw
-
-The main session called `super_eval` once (`decision: accept`, `strength: explicit`, `lane: code`) and answered:
-
-> Accepted t1: workers will update greet and add the node:test test.
-
-It did not call `edit`, `write`, or `bash`. The system prompt's tool list for that turn was `read`, `super_eval`, `super_answer`, `super_report`, `super_status`, `grep`, `find`, `ls`.
-
-After the workers finished, the kernel appended one delivery and the Router answered:
-
-> Done: greet now returns exactly `Hello, <name>!`, and src/greet.test.ts uses node:test with node:assert/strict to check greet("Ada") === "Hello, Ada!". Tests pass (1 pass, 0 fail), with no new dependencies and no commits.
-
-No question was asked. A second settle did not nudge. The earlier build did nudge after a delivery, because the continuation started a new agent run and cleared the "already admitted" counter. `spokeThisRun` now blocks that. This run does not contain "No decision was recorded".
-
-## What ran underneath
-
-Session facts, one hop for the whole lane:
+The next message in the same session was `double`. The only tool call was `super_answer` with `choice: "double"`. Then one hop:
 
 | Time (UTC) | Fact |
 | --- | --- |
-| 2026-11-04T06:25:56Z | `ticket.created` t1, lane `code` |
-| 2026-11-04T06:25:58Z | `assignment.started` scout, hops 1 |
-| 2026-11-04T06:26:31Z | `assignment.started` planner, hops 1 |
-| 2026-11-04T06:26:46Z | `assignment.started` worker, hops 1 |
-| 2026-11-04T06:27:00Z | `assignment.started` reviewer, hops 1 |
-| 2026-11-04T06:27:17Z | `report.recorded` ready: greet returns "Hello, \<name\>!"; node:test test added and npm test passes (1 pass, 0 fail). |
-| 2026-11-04T06:27:17Z | `loop.continued` |
+| 06:51:29 | `attention.answered` double |
+| 06:51:32 | scout, hops 1 |
+| 06:51:52 | planner, hops 1 |
+| 06:52:00 | worker, hops 1 |
+| 06:52:10 | reviewer, hops 1 |
+| 06:52:25 | `ready` |
 
-`src/greet.ts` ended as:
+`src/pace.ts`:
 
 ```ts
-export function greet(name: string): string {
-	return `Hello, ${name}!`;
+export function pace(n: number): number {
+  return n * 2;
 }
 ```
 
-`src/greet.test.ts` checks `greet('World')`, not the Ada string the mandate named. The worker also added a `package.json` with `"test": "node --experimental-strip-types --test src/greet.test.ts"` and no dependencies. Nothing was committed (`git status` showed the edits unstaged on top of the script's initial commit).
-
-The receipt's "npm test passes" matches that script. The Router's sentence that the test asserts `greet("Ada")` is stronger than the receipt, which did not name Ada. The implementation still satisfies it.
-
-## Checks after the run
-
-`node --experimental-strip-types --test src/greet.test.ts`:
+The delivery copied the receipt:
 
 ```text
-# tests 1
-# pass 1
-# fail 0
+From the worker receipt:
+t1 ready.
+Criteria met: src/pace.ts exists with `export function pace(n: number)` (line 1) and `return n * 2;` (line 2), matching the mandate's pace(n) doubles n. No test command exists to run.
 ```
 
-`greet("Ada") === "Hello, Ada!"` in a separate Node process: exit 0.
+That sentence matches the file. The Router model did not add a check the receipt did not contain.
 
-The redacted JSON log stayed in `/tmp/pi-super-accept.log` on the acceptance machine. It is not committed.
+## Cents task — fail
+
+Prompt: `formatCents(199)` is `"$1.99"`, `formatCents(5)` is `"$0.05"`, `formatCents(-40)` is `"-$0.40"`, and `parseCents` is the inverse for those three strings. Tests must use `node:test`.
+
+pi exited 0. The lane ran, and the kernel did send a mismatch back:
+
+| Time (UTC) | Fact |
+| --- | --- |
+| 06:40:59 | ticket created |
+| 06:41:05–06:42:41 | scout, planner, worker, reviewer, hops 1 |
+| 06:43:05 | `progress`: `Missing acceptance literal: "$1.99", "$0.05", "-$0.40".` |
+| 06:43:05–06:43:49 | worker, then reviewer, hops 2 |
+| 06:44:27 | `ready` |
+
+The first review was not accepted, because those quoted strings were not in the tree. The repair added them on `parseCents` only. The final receipt, which the delivery copied verbatim (`quotesOutsideReceipt` was empty), said the literals were present and that 14 tests passed.
+
+Independent check of the functions after that run:
+
+| Call | Required | Actual |
+| --- | --- | --- |
+| `formatCents(199)` | `"$1.99"` | `"1.99"` |
+| `formatCents(5)` | `"$0.05"` | `"0.05"` |
+| `formatCents(-40)` | `"-$0.40"` | `"-0.40"` |
+| `parseCents("$1.99")` | `199` | `199` |
+| `parseCents("$0.05")` | `5` | `5` |
+| `parseCents("-$0.40")` | `-40` | `-40` |
+
+`formatCents` never emits `$`. The test file contains `"$1.99"` only as a `parseCents` input, and it expects `formatCents(parseCents("$1.99"))` to be `"1.99"`. The quoted-literal gate therefore allowed `ready`. The reviewer did not catch that the format function drops the dollar sign. The Router did not invent that claim: the speech is the receipt. The receipt is wrong about `formatCents`.
+
+`scripts/accept.mjs` treats that behavior check as required, so the full script exits 1.
+
+## What this does and does not show
+
+- Grounded delivery: pass. Question text, options, and the ready summary are copied from the receipt. A unit test rejects a ready summary that mentions `Ada` when the evidence does not.
+- One question and `super_answer`: pass, on the run above.
+- Reviewer or kernel send-back when a quoted literal is missing from the tree: pass, on the cents run's first review.
+- Reviewer catching a wrong `formatCents` result when the dollar strings merely appear somewhere in the tests: fail.

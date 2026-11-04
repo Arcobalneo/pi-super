@@ -250,6 +250,48 @@ describe("runtime", () => {
 		expect(drained.speech).not.toContain("World");
 	});
 
+	it("does not accept a ready review that missed a quoted literal", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-super-corpus-"));
+		writeFileSync(join(dir, "cents.test.ts"), 'assert.equal(formatCents(5), "$0.05");\n');
+		const { runtime, files, rulesPath, agents } = setup(() =>
+			result('```pi-super\n{"report":"ready","summary":"all good"}\n```'),
+		);
+		writeRole(agents, "reviewer");
+		files.set(rulesPath, '{"hopLimit":1}');
+		runtime.armLoop();
+		runtime.evalDecision({
+			title: "Cents",
+			scope: 'formatCents(199) === "$1.99" and formatCents(5) === "$0.05"',
+			strength: "explicit",
+			decision: "accept",
+			reason: "user asked",
+		});
+		const drained = await runtime.drain({ cwd: dir, agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(runtime.state.tickets[0]?.status).toBe("open");
+		expect(runtime.state.tickets[0]?.assignment?.reportKind).toBe("progress");
+		expect(runtime.state.tickets[0]?.assignment?.summary).toContain('"$1.99"');
+		expect(drained.speech).toContain('"$1.99"');
+		expect(drained.speech).not.toContain("all good");
+	});
+
+	it("shows one Router question from the receipt and does not invent a second", async () => {
+		const { runtime } = setup(() => result("unused"));
+		runtime.armLoop();
+		runtime.evalDecision({ title: "Pace", scope: "pace(n) is keep or double", strength: "explicit", decision: "accept", reason: "user asked" });
+		runtime.recordReport("t1", "blocked", "Awaiting the choice", {
+			title: "pace(n) behavior",
+			text: "Should pace(n) return n or n * 2?",
+			options: ["keep", "double"],
+			key: "pace",
+		});
+		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(drained.dispatched).toBe(0);
+		expect(drained.speech).toContain("Should pace(n) return n or n * 2?");
+		expect(drained.speech).toContain("1. keep\n2. double");
+		expect(drained.speech).not.toContain("other question");
+		expect(drained.speech).not.toContain("pace(n) is keep or double");
+	});
+
 	it("blocks an ask-first assignment until the person answers", async () => {
 		let calls = 0;
 		const { runtime } = setup(() => {

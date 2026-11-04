@@ -204,7 +204,8 @@ export function registerTools(
 					}
 				: undefined);
 			paint(ctx);
-			return textResult(text);
+			const shown = params.ask ? `${text} The question is shown from the receipt. Do not restate it. Stop.` : text;
+			return textResult(shown);
 		},
 		renderCall(args, theme) {
 			return new Text(theme.fg("toolTitle", theme.bold("super_report ")) + theme.fg("accent", args.ticketId), 0, 0);

@@ -123,6 +123,23 @@ export interface GroundedQuestion {
  * The text the person sees. It is assembled from receipt fields only.
  * A fact that is not in `evidence` cannot appear, because nothing else is copied in.
  */
+/** Quoted acceptance checks in a mandate, such as `"$1.99"`. */
+export function acceptanceLiterals(scope: string): string[] {
+	const found: string[] = [];
+	for (const match of scope.matchAll(/"([^"\n]{1,120})"|'([^'\n]{1,120})'/g)) {
+		const value = (match[1] ?? match[2] ?? "").trim();
+		// Option words such as "keep" are not file checks. A literal with a
+		// digit or symbol, such as "$1.99", is.
+		if (value && /[^A-Za-z\s]/.test(value) && !found.includes(value)) found.push(value);
+	}
+	return found;
+}
+
+/** Literals the mandate quotes that do not appear in the project text. */
+export function missingAcceptanceLiterals(scope: string, corpus: string): string[] {
+	return acceptanceLiterals(scope).filter((literal) => !corpus.includes(literal));
+}
+
 export function groundedSpeech(input: {
 	results: GroundedResult[];
 	question?: GroundedQuestion;
