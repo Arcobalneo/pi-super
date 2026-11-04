@@ -219,6 +219,9 @@ describe("runtime", () => {
 	it("sends a reviewer mismatch back to the worker and speaks only the final receipt", async () => {
 		const seen: string[] = [];
 		let reviews = 0;
+		const project = mkdtempSync(join(tmpdir(), "pi-super-mismatch-"));
+		mkdirSync(join(project, "src"));
+		writeFileSync(join(project, "src", "greet.ts"), "export function greet(name: string): string {\n\treturn `Hello, ${name}!`;\n}\n");
 		const { runtime, agents } = setup((task) => {
 			seen.push(task);
 			if (task.includes("acceptance criterion") || task.includes("Review the files again")) {
@@ -239,7 +242,7 @@ describe("runtime", () => {
 			decision: "accept",
 			reason: "user asked",
 		});
-		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		const drained = await runtime.drain({ cwd: project, agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
 		expect(reviews).toBe(2);
 		expect(seen.filter((task) => task.includes("Map the files"))).toHaveLength(1);
 		expect(seen.filter((task) => task.includes("Fix every mismatch"))).toHaveLength(1);
