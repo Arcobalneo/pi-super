@@ -1,10 +1,10 @@
 ---
-description: Review the current changes with the pi-super reviewer agent
+description: Ask the Router to review the current changes with pi-super
 argument-hint: "[focus]"
 ---
 
 Use pi-super to review ${@:-the current changes}.
 
-1. Call super_eval. decision is accept, strength is explicit, and the scope is a read-only review.
-2. Call super_dispatch for that ticket with agent reviewer.
-3. If the reviewer asks a question, stop and ask the user that question.
+Call super_eval once. decision is accept, strength is explicit, lane is review, and the scope is a read-only review.
+Confirm in one sentence, then stop. Do not review the diff yourself.
+If a delivery asks one question, ask that question and stop.

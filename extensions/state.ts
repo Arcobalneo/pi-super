@@ -2,6 +2,7 @@ import type {
 	Attention,
 	DecisionKind,
 	Fact,
+	Lane,
 	ReportKind,
 	Strength,
 	SuperState,
@@ -23,6 +24,7 @@ export function emptyState(): SuperState {
 		notices: [],
 		planMode: false,
 		loopArmed: false,
+		loopTouched: false,
 		loopHops: 0,
 	};
 }
@@ -37,6 +39,7 @@ export function reduce(state: SuperState, fact: Fact): SuperState {
 			break;
 		case "mode.loop":
 			next.loopArmed = fact.armed;
+			next.loopTouched = true;
 			if (fact.armed && fact.resetFuse) next.loopHops = 0;
 			break;
 		case "loop.continued":
@@ -85,6 +88,9 @@ export function reduce(state: SuperState, fact: Fact): SuperState {
 			const key = ticket.attention?.key ?? "answer";
 			ticket.answers.push({ key, choice: fact.choice });
 			ticket.attention = undefined;
+			if (ticket.status === "open" && ticket.assignment?.reportKind === "blocked") {
+				ticket.assignment.reportKind = "progress";
+			}
 			break;
 		}
 		case "ticket.ended": {
@@ -254,6 +260,7 @@ function seedTicket(seed: TicketSeed): Ticket {
 		policyVersion: seed.policyVersion,
 		askFirst: [...seed.askFirst],
 		status: "open",
+		lane: seed.lane ?? "code",
 		hops: seed.hops,
 		parentId: seed.parentId,
 		answers: [],
@@ -290,6 +297,7 @@ function parseTicketSeed(value: unknown): TicketSeed | undefined {
 	if (!isStrength(record.strength) || !isString(record.policyVersion) || !isInt(record.hops)) return undefined;
 	const askFirst = stringList(record.askFirst);
 	if (!askFirst) return undefined;
+	if (record.lane !== undefined && !isLane(record.lane)) return undefined;
 	const data = parseData(record.data);
 	return {
 		id: record.id,
@@ -298,6 +306,7 @@ function parseTicketSeed(value: unknown): TicketSeed | undefined {
 		strength: record.strength,
 		policyVersion: record.policyVersion,
 		askFirst,
+		lane: isLane(record.lane) ? record.lane : undefined,
 		hops: record.hops,
 		parentId: isString(record.parentId) ? record.parentId : undefined,
 		data,
@@ -351,4 +360,8 @@ function isStrength(value: unknown): value is Strength {
 
 function isDecision(value: unknown): value is DecisionKind {
 	return typeof value === "string" && DECISIONS.has(value as DecisionKind);
+}
+
+function isLane(value: unknown): value is Lane {
+	return value === "code" || value === "review" || value === "answer";
 }

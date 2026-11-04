@@ -1,9 +1,9 @@
 /**
  * Pi Superagent.
  *
- * The main session is the orchestrator. Tickets live in append-only session
- * entries. Subagents are `pi` subprocesses, same shape as the official
- * subagent example, with extensions disabled so the kernel cannot recurse.
+ * The main session is the Router. It admits work and speaks to the person.
+ * Workers are isolated `pi` subprocesses with extensions disabled so the
+ * loop cannot recurse. The person never talks to a worker.
  */
 
 import { readFileSync } from "node:fs";
@@ -17,8 +17,9 @@ import {
 	isToolCallEventType,
 } from "@earendil-works/pi-coding-agent";
 import { bundledAgentsDir } from "./agents.ts";
-import { asksFirst, isReadOnlyCommand, planModeTools } from "./gate.ts";
+import { asksFirst, isReadOnlyCommand } from "./gate.ts";
 import { findUp } from "./paths.ts";
+import { ADMIT_NUDGE, PLAN_CONTRACT, ROUTER_CONTRACT } from "./router.ts";
 import { SuperRuntime } from "./runtime.ts";
 import { runSubagent } from "./runner.ts";
 import { personTickets, statusLine, widgetLines } from "./stage.ts";
@@ -60,6 +61,11 @@ export default function piSuper(pi: ExtensionAPI): void {
 		type: "boolean",
 		default: false,
 	});
+	pi.registerFlag("super-off", {
+		description: "Do not take the Router role; leave this session as a normal coding agent",
+		type: "boolean",
+		default: false,
+	});
 	pi.registerShortcut(Key.ctrlAlt("s"), {
 		description: "Show pi-super status",
 		handler: async (ctx) => {
@@ -70,9 +76,14 @@ export default function piSuper(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		runtime.beginSession(ctx.sessionManager.getBranch(), ctx.cwd);
-		if (pi.getFlag("super") === true) runtime.armLoop();
-		if (pi.getFlag("super-plan") === true) pi.setActiveTools(runtime.armPlan(pi.getActiveTools()));
-		else if (runtime.state.planMode) pi.setActiveTools(planModeTools(runtime.state.toolsBeforePlan ?? pi.getActiveTools()));
+		runtime.rememberTools(pi.getActiveTools());
+		if (pi.getFlag("super-off") === true) runtime.disarmLoop();
+		else if (pi.getFlag("super") === true || !runtime.state.loopTouched) runtime.armLoop();
+		if (pi.getFlag("super-plan") === true || runtime.state.planMode) {
+			pi.setActiveTools(runtime.armPlan(runtime.toolsForMode()));
+		} else {
+			pi.setActiveTools(runtime.toolsForMode());
+		}
 		paint(ctx);
 		if (runtime.rulesError && ctx.hasUI && runtime.rules.tell !== "never") ctx.ui.notify(runtime.rulesError, "warning");
 	});
@@ -90,6 +101,12 @@ export default function piSuper(pi: ExtensionAPI): void {
 	}));
 
 	pi.on("before_agent_start", async (event) => {
+		if (event.messageType === "user") runtime.noteUserPrompt(event.prompt);
+		if (runtime.state.loopArmed || runtime.state.planMode) {
+			const contract = runtime.state.planMode ? PLAN_CONTRACT : ROUTER_CONTRACT;
+			const prior = event.systemPromptOptions.appendSystemPrompt;
+			event.systemPromptOptions.appendSystemPrompt = prior ? `${prior}\n\n${contract}` : contract;
+		}
 		if (event.messageType !== "user") return;
 		const open = runtime.state.tickets.some((ticket) => ticket.status === "open");
 		if (!runtime.state.planMode && !runtime.state.loopArmed && !open) return;
@@ -103,6 +120,14 @@ export default function piSuper(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (runtime.state.loopArmed && !runtime.state.planMode) {
+			if (event.toolName === "edit" || event.toolName === "write" || event.toolName === "bash" || event.toolName === "super_dispatch") {
+				return {
+					block: true,
+					reason: "The Router does not implement. Call super_eval to admit the work. Workers run it.",
+				};
+			}
+		}
 		if (runtime.state.planMode && (event.toolName === "edit" || event.toolName === "write")) {
 			return { block: true, reason: "Plan mode blocks writes. Use /super plan to leave it." };
 		}
@@ -129,12 +154,15 @@ export default function piSuper(pi: ExtensionAPI): void {
 		runtime.acceptedThisRun = 0;
 		const choice = await ctx.ui.select("Plan recorded", ["Dispatch the tickets", "Stay in plan mode", "Refine the plan"]);
 		if (choice?.startsWith("Dispatch")) {
-			const toggled = runtime.togglePlan(pi.getActiveTools());
-			pi.setActiveTools(toggled.tools);
+			runtime.togglePlan(pi.getActiveTools());
+			pi.setActiveTools(runtime.toolsForMode());
 			paint(ctx);
-			pi.sendUserMessage("Plan accepted. Call super_dispatch for the open tickets. Stop if a ticket needs a person.", {
-				deliverAs: "followUp",
-			});
+			pi.sendUserMessage(
+				runtime.state.loopArmed
+					? "Plan accepted. The loop will run the open tickets. Do not implement them. Stop if a ticket needs a person."
+					: "Plan accepted. Call super_dispatch for the open tickets. Stop if a ticket needs a person.",
+				{ deliverAs: "followUp" },
+			);
 		} else if (choice === "Refine the plan") {
 			pi.sendUserMessage("Refine the plan. Stay in plan mode. Call super_eval if the tickets should change.", {
 				deliverAs: "followUp",
@@ -144,6 +172,16 @@ export default function piSuper(pi: ExtensionAPI): void {
 
 	pi.on("agent_before_settle", async (event, ctx) => {
 		if (event.outcome !== "completed" || !runtime.state.loopArmed || runtime.state.planMode) return;
+		if (runtime.shouldNudge()) {
+			runtime.admitNudged = true;
+			return {
+				continue: true,
+				entries: [
+					...event.entries,
+					{ type: "custom_message", customType: RESULT_TYPE, content: ADMIT_NUDGE, display: false },
+				],
+			};
+		}
 		const report = await runtime.drain({
 			cwd: ctx.cwd,
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
@@ -157,12 +195,12 @@ export default function piSuper(pi: ExtensionAPI): void {
 		});
 		paint(ctx);
 		notify(ctx, report.notices);
-		if (!report.needsModel || !report.speech) return;
+		if (!report.speech) return;
+		runtime.spokeThisRun = true;
 		return {
-			continue: true,
 			entries: [
 				...event.entries,
-				{ type: "custom_message", customType: RESULT_TYPE, content: report.speech, display: false },
+				{ type: "custom_message", customType: RESULT_TYPE, content: report.speech, display: true },
 			],
 		};
 	});

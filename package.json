@@ -1,10 +1,22 @@
 {
   "name": "pi-super",
-  "version": "0.1.0",
-  "description": "Pi package that adds a superagent: plan tickets, dispatch subagents, and ask a person only when a decision is blocked.",
+  "version": "0.2.0",
+  "description": "Pi package that turns the main session into a Super-agent Router. The person talks only to that session; workers, events, and the loop stay underneath.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package", "pi-extension", "superagent"],
+  "author": "Arcobalneo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Arcobalneo/pi-super.git"
+  },
+  "homepage": "https://github.com/Arcobalneo/pi-super#readme",
+  "bugs": {
+    "url": "https://github.com/Arcobalneo/pi-super/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": ["pi-package", "pi", "pi-extension", "superagent", "router", "autoloop"],
   "engines": {
     "node": ">=22.19.0"
   },

@@ -14,7 +14,10 @@ export type ReportKind = "progress" | "waiting" | "ready" | "blocked" | "failed"
 
 export type DecisionKind = "accept" | "stop" | "ignore";
 
-export type Stage = "ended" | "person/answer" | "person/blocked" | "working" | "working/queued" | "idle";
+/** Live ticket lifecycle. `ended` is a stop or a drop, not a successful delivery. */
+export type Stage = "admit" | "dispatch" | "running" | "ready" | "ask" | "later" | "failed" | "ended";
+
+export type Lane = "code" | "review" | "answer";
 
 export type TellMode = "always" | "needed" | "never";
 
@@ -56,6 +59,7 @@ export interface Ticket {
 	askFirst: string[];
 	status: "open" | "ended";
 	outcome?: string;
+	lane: Lane;
 	hops: number;
 	parentId?: string;
 	assignment?: Assignment;
@@ -73,6 +77,7 @@ export interface TicketSeed {
 	strength: Strength;
 	policyVersion: string;
 	askFirst: string[];
+	lane?: Lane;
 	hops: number;
 	parentId?: string;
 	data?: TicketData[];
@@ -112,6 +117,8 @@ export interface SuperState {
 	planMode: boolean;
 	toolsBeforePlan?: string[];
 	loopArmed: boolean;
+	/** True after a loop fact is replayed, so a fresh session can default the loop on. */
+	loopTouched: boolean;
 	loopHops: number;
 }
 

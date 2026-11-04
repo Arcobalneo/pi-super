@@ -118,9 +118,11 @@ export function interpretOutput(text: string, exitCode: number, stderr: string):
 }
 
 function normalizeReceipt(record: Record<string, unknown>): Receipt | undefined {
-	const report = typeof record.report === "string" && REPORTS.has(record.report as ReportKind)
-		? (record.report as ReportKind)
+	const aliased = aliasReport(record);
+	const report = typeof aliased.report === "string" && REPORTS.has(aliased.report as ReportKind)
+		? (aliased.report as ReportKind)
 		: undefined;
+	record = aliased;
 	const summary = typeof record.summary === "string" ? record.summary : undefined;
 	const ask = normalizeAsk(record.ask);
 	const notice = normalizeNotice(record.notice);
@@ -132,6 +134,21 @@ function normalizeReceipt(record: Record<string, unknown>): Receipt | undefined 
 	if (record.report !== undefined && !report) return undefined;
 	if (!report && !summary && !ask && !notice && !later && events.length === 0) return undefined;
 	return { report, summary, ask, notice, later, events };
+}
+
+/** `ask` and `later` are lifecycle names workers may write. The ledger stores the report kind. */
+function aliasReport(record: Record<string, unknown>): Record<string, unknown> {
+	if (record.report === "ask") {
+		const summary = typeof record.summary === "string" && record.summary.trim() ? record.summary : "Need a decision";
+		const ask = record.ask ?? { title: clampText(summary, 120), text: summary, options: ["Continue", "Stop"] };
+		return { ...record, report: "blocked", ask };
+	}
+	if (record.report === "later") {
+		const summary = typeof record.summary === "string" && record.summary.trim() ? record.summary : "Follow up later";
+		const later = record.later ?? { key: "follow-up", about: summary };
+		return { ...record, report: "waiting", later };
+	}
+	return record;
 }
 
 function normalizeAsk(value: unknown): ReceiptAsk | undefined {
