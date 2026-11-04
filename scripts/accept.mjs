@@ -77,10 +77,10 @@ async function runCents() {
 		ok:
 			behavior.status === 0 &&
 			extras.length === 0 &&
-			["$1.99", "$0.05", "-$0.40"].every((bit) => test.includes(bit)) &&
 			run.agents.includes("reviewer") &&
 			receipt.length > 0 &&
-			speech.includes(receipt),
+			speech.includes(receipt) &&
+			!/returned "1\.99"/.test(speech),
 		exitCode: run.exitCode,
 		agents: run.agents,
 		hops: run.hops,
@@ -107,10 +107,11 @@ async function runAsk() {
 	await git(repo, ["add", "."]);
 	await git(repo, ["-c", "user.email=accept@example.com", "-c", "user.name=accept", "commit", "-m", "start"]);
 	const prompt = [
-		"Add src/pace.ts exporting pace(n: number): number.",
+		"Add only src/pace.ts exporting pace(n: number): number.",
 		"I have not decided whether pace(n) returns n or n * 2.",
 		'Ask exactly one question. The only options are "keep" and "double".',
 		"Do not write the file until I answer.",
+		"After I answer, write only that file. Do not add package.json, a test runner, or a second question.",
 	].join(" ");
 	const first = await runPi(repo, sessionDir, "ask", prompt, 8 * 60 * 1000);
 	const firstSpeech = lastReceiptMessage(first.events);

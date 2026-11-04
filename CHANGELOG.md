@@ -33,7 +33,7 @@ The main Pi session is the Router. Workers, receipts, and the loop stay under it
 
 - The spoken summary no longer restates the person's request as if the receipt had said it. The text is `groundedSpeech`: receipt evidence, and nothing else.
 - The reviewer is instructed to compare every acceptance criterion, including exact literals such as `greet("Ada")`, and to report `progress` instead of `ready` when a test asserts something else.
-- A `ready` review on a code ticket is rejected when a quoted literal from the mandate is absent from the project. The ticket goes back with `Missing acceptance literal`, and that sentence is what the person sees if the hop limit stops the repair.
+- A `ready` review is checked by running the mandate's input→output examples, such as `formatCents(199)` → `"$1.99"`. A mismatch sends the ticket back with the actual and expected values. A quoted string that only appears somewhere in the file is not proof. The literal scan remains a pre-check when the mandate has no runnable example.
 
 ## [0.1.0] - 2026-11-04
 

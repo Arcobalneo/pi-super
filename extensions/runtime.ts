@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { discoverAgents } from "./agents.ts";
+import { behaviorSummary, parseBehaviorExamples, runBehaviorExamples } from "./behavior.ts";
 import { asksFirst, planModeTools } from "./gate.ts";
 import { interpretOutput, type Interpreted } from "./receipt.ts";
 import { groundedSpeech, missingAcceptanceLiterals, nextPhase, pipelineFor, routerTools } from "./router.ts";
@@ -325,8 +326,9 @@ export class SuperRuntime {
 	}
 
 	recordReport(ticketId: string, kind: ReportKind, summary: string, ask?: Interpreted["ask"]): string {
-		const ticket = this.state.tickets.find((item) => item.id === ticketId);
-		if (!ticket || ticket.status !== "open") return `${ticketId} is not an open ticket.`;
+		const ticket = this.resolveOpenTicket(ticketId);
+		if (!ticket) return `${ticketId} is not an open ticket.`;
+		ticketId = ticket.id;
 		const interpreted: Interpreted = {
 			report: ask ? "blocked" : kind,
 			summary: clampText(summary, 4000),
@@ -404,9 +406,11 @@ export class SuperRuntime {
 				hopTickets.length > 0 && pieces.length > 0
 					? hopTickets
 							.map((ticket) => {
-								const mismatch = ticket.assignment?.summary?.startsWith("Missing acceptance literal")
-									? ` ${ticket.assignment.summary}`
-									: "";
+								const summary = ticket.assignment?.summary;
+								const mismatch =
+									summary?.startsWith("Behavior mismatch:") || summary?.startsWith("Missing acceptance literal")
+										? ` ${summary}`
+										: "";
 								return `${ticket.id} reached ${ticket.hops} of ${this.rules.hopLimit} hops.${mismatch}`;
 							})
 							.join(" ")
@@ -598,13 +602,21 @@ export class SuperRuntime {
 			interpreted.report === "ready" &&
 			(ticket.lane === "code" || ticket.lane === "review")
 		) {
-			const missing = missingAcceptanceLiterals(ticket.scope, readCorpus(request.cwd));
-			if (missing.length > 0) {
-				interpreted = {
-					report: "progress",
-					summary: `Missing acceptance literal: ${missing.map((item) => JSON.stringify(item)).join(", ")}.`,
-					events: [],
-				};
+			const examples = parseBehaviorExamples(ticket.scope);
+			if (examples.length > 0) {
+				const mismatches = await runBehaviorExamples(request.cwd, examples);
+				if (mismatches.length > 0) {
+					interpreted = { report: "progress", summary: behaviorSummary(mismatches), events: [] };
+				}
+			} else {
+				const missing = missingAcceptanceLiterals(ticket.scope, readCorpus(request.cwd));
+				if (missing.length > 0) {
+					interpreted = {
+						report: "progress",
+						summary: `Missing acceptance literal: ${missing.map((item) => JSON.stringify(item)).join(", ")}.`,
+						events: [],
+					};
+				}
 			}
 		}
 		const hard = Boolean(interpreted.ask) || interpreted.report === "failed" || interpreted.report === "blocked";
@@ -775,6 +787,16 @@ export class SuperRuntime {
 
 	private combinedSignal(signal?: AbortSignal): AbortSignal {
 		return signal ? AbortSignal.any([this.abort.signal, signal]) : this.abort.signal;
+	}
+
+	/** `1` means the only open ticket, or `t1`, when the model drops the prefix. */
+	private resolveOpenTicket(ticketId: string): Ticket | undefined {
+		const open = this.state.tickets.filter((ticket) => ticket.status === "open");
+		return (
+			open.find((ticket) => ticket.id === ticketId) ??
+			open.find((ticket) => ticket.id === `t${ticketId}`) ??
+			(open.length === 1 ? open[0] : undefined)
+		);
 	}
 
 	private apply(fact: Fact): void {

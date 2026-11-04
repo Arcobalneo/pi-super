@@ -42,7 +42,7 @@ Studied at:
 3. `super_eval` accept writes a ticket and returns. The model is told to stop.
 4. On settle, the kernel drains runnable tickets up to the hop limit and `MAX_DRAIN_STEPS`. A `code` ticket runs the four roles in order. A role that asks or fails stops the round. The round counts as one hop.
 5. The kernel shows one delivery built only from the receipt: the summary, or one question's title, text, and options. The model does not paraphrase it.
-6. A reviewer `progress` report sends the ticket back to the worker and then the reviewer. `ready` is not recorded for that round.
+6. A reviewer `progress` report sends the ticket back to the worker and then the reviewer. Before `ready` is kept, the kernel runs input→output examples taken from the mandate. A quoted string elsewhere in the tree is not a pass.
 7. The person answers in prose (`super_answer`) or with `/super answer`. The next settle resumes that ticket.
 
 ## 没有照搬的部分 / Not adopted

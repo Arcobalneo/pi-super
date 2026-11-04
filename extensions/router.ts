@@ -92,7 +92,7 @@ function repairTask(agent: string): string {
 	if (agent === "worker") {
 		return [
 			"The reviewer rejected the result. Fix every mismatch named in the previous report.",
-			"The summary must list the checks that are actually in the files, not the checks the mandate asked for unless they are now the same.",
+			"If a call returned the wrong value, change the function so that call returns the expected value. Putting the expected string in a comment or in a different function is not a fix.",
 			"",
 			"{previous}",
 		].join("\n");

@@ -9,6 +9,7 @@ import { buildSubagentArgs, resolvePiCommand } from "../extensions/pi-command.ts
 import { interpretOutput, parseReceipt } from "../extensions/receipt.ts";
 import { DEFAULT_RULES, loadRules, policyVersion, readRulesText } from "../extensions/rules.ts";
 import { factsFromEntries, nextId, parseFact, project } from "../extensions/state.ts";
+import { parseBehaviorExamples } from "../extensions/behavior.ts";
 import { acceptanceLiterals, groundedSpeech, missingAcceptanceLiterals, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
 import { hopLimited, isAutoRunnable, selectTickets, ticketStage, widgetLines } from "../extensions/stage.ts";
 import { buildTask, parseSuperArgs } from "../extensions/task.ts";
@@ -199,6 +200,16 @@ describe("gates and commands", () => {
 		const scope = 'formatCents(199) === "$1.99" and formatCents(5) === "$0.05"';
 		expect(acceptanceLiterals(scope)).toEqual(["$1.99", "$0.05"]);
 		expect(acceptanceLiterals('options are "keep" and "double"')).toEqual([]);
+		const examples =
+			'Implement formatCents (cents → dollar string, e.g. 199 → "$1.99", 5 → "$0.05", -40 → "-$0.40") and parseCents (inverse, "$1.99" → 199, "$0.05" → 5, "-$0.40" → -40).';
+		expect(parseBehaviorExamples(examples)).toEqual([
+			{ fn: "formatCents", args: [199], expected: "$1.99" },
+			{ fn: "formatCents", args: [5], expected: "$0.05" },
+			{ fn: "formatCents", args: [-40], expected: "-$0.40" },
+			{ fn: "parseCents", args: ["$1.99"], expected: 199 },
+			{ fn: "parseCents", args: ["$0.05"], expected: 5 },
+			{ fn: "parseCents", args: ["-$0.40"], expected: -40 },
+		]);
 		expect(missingAcceptanceLiterals(scope, 'assert.equal(formatCents(5), "$0.05");')).toEqual(["$1.99"]);
 	});
 

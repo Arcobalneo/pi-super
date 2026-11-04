@@ -250,6 +250,106 @@ describe("runtime", () => {
 		expect(drained.speech).not.toContain("World");
 	});
 
+	it("rejects ready when formatCents drops the dollar sign but the tests mention it", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-super-false-ready-"));
+		mkdirSync(join(dir, "src"));
+		writeFileSync(
+			join(dir, "src", "cents.ts"),
+			[
+				"export function formatCents(cents: number): string {",
+				"\tconst sign = cents < 0 ? '-' : '';",
+				"\tconst abs = Math.abs(cents);",
+				"\treturn `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;",
+				"}",
+				"export function parseCents(value: string): number {",
+				"\tconst m = /^\\s*(-?)\\$?(\\d+)(?:\\.(\\d{1,2}))?\\s*$/.exec(value);",
+				"\tif (!m) throw new Error('bad');",
+				"\tconst sign = m[1] === '-' ? -1 : 1;",
+				"\treturn sign * (Number(m[2]) * 100 + Number((m[3] ?? '').padEnd(2, '0')));",
+				"}",
+				"",
+			].join("\n"),
+		);
+		writeFileSync(
+			join(dir, "src", "cents.test.ts"),
+			[
+				'import { parseCents } from "./cents.ts";',
+				'import assert from "node:assert/strict";',
+				'assert.equal(parseCents("$1.99"), 199);',
+				'assert.equal(parseCents("$0.05"), 5);',
+				'assert.equal(parseCents("-$0.40"), -40);',
+				"",
+			].join("\n"),
+		);
+		const { runtime, files, rulesPath, agents } = setup(() =>
+			result(
+				'```pi-super\n{"report":"ready","summary":"All acceptance literals present in src/cents.test.ts"}\n```',
+			),
+		);
+		writeRole(agents, "reviewer");
+		files.set(rulesPath, '{"hopLimit":1}');
+		runtime.armLoop();
+		runtime.evalDecision({
+			title: "Cents",
+			scope:
+				'Implement formatCents (cents → dollar string, e.g. 199 → "$1.99", 5 → "$0.05", -40 → "-$0.40") and parseCents (inverse, "$1.99" → 199, "$0.05" → 5, "-$0.40" → -40).',
+			strength: "explicit",
+			decision: "accept",
+			reason: "user asked",
+		});
+		const drained = await runtime.drain({
+			cwd: dir,
+			agentScope: "trusted",
+			projectTrusted: true,
+			selector: "auto",
+			hasUI: true,
+		});
+		expect(runtime.state.tickets[0]?.status).toBe("open");
+		expect(runtime.state.tickets[0]?.assignment?.reportKind).toBe("progress");
+		const summary = runtime.state.tickets[0]?.assignment?.summary ?? "";
+		expect(summary).toContain('formatCents(199) returned "1.99"');
+		expect(summary).toContain('expected "$1.99"');
+		expect(summary).not.toContain("All acceptance literals present");
+		expect(drained.speech).toContain('returned "1.99"');
+		expect(drained.speech).not.toContain("All acceptance literals present");
+	});
+
+	it("accepts ready when the mandate examples actually return the expected values", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-super-true-ready-"));
+		mkdirSync(join(dir, "src"));
+		writeFileSync(
+			join(dir, "src", "cents.ts"),
+			[
+				"export function formatCents(cents: number): string {",
+				"\tconst sign = cents < 0 ? '-' : '';",
+				"\tconst abs = Math.abs(cents);",
+				"\treturn `${sign}$${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;",
+				"}",
+				"export function parseCents(value: string): number {",
+				"\tconst m = /^\\s*(-?)\\$?(\\d+)(?:\\.(\\d{1,2}))?\\s*$/.exec(value);",
+				"\tif (!m) throw new Error('bad');",
+				"\tconst sign = m[1] === '-' ? -1 : 1;",
+				"\treturn sign * (Number(m[2]) * 100 + Number((m[3] ?? '').padEnd(2, '0')));",
+				"}",
+				"",
+			].join("\n"),
+		);
+		const { runtime, agents } = setup(() =>
+			result('```pi-super\n{"report":"ready","summary":"formatCents(199) returns \\"$1.99\\"."}\n```'),
+		);
+		writeRole(agents, "reviewer");
+		runtime.evalDecision({
+			title: "Cents",
+			scope: 'formatCents(199) must be "$1.99". parseCents("$1.99") must be 199.',
+			strength: "explicit",
+			decision: "accept",
+			reason: "user asked",
+		});
+		await runtime.dispatch({ cwd: dir, agentScope: "trusted", projectTrusted: true, selector: "auto" });
+		expect(runtime.state.tickets[0]?.status).toBe("ended");
+		expect(runtime.state.tickets[0]?.outcome).toBe("completed");
+	});
+
 	it("does not accept a ready review that missed a quoted literal", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-super-corpus-"));
 		writeFileSync(join(dir, "cents.test.ts"), 'assert.equal(formatCents(5), "$0.05");\n');
@@ -261,7 +361,7 @@ describe("runtime", () => {
 		runtime.armLoop();
 		runtime.evalDecision({
 			title: "Cents",
-			scope: 'formatCents(199) === "$1.99" and formatCents(5) === "$0.05"',
+			scope: 'Show the price as "$1.99" on the receipt.',
 			strength: "explicit",
 			decision: "accept",
 			reason: "user asked",
@@ -272,6 +372,22 @@ describe("runtime", () => {
 		expect(runtime.state.tickets[0]?.assignment?.summary).toContain('"$1.99"');
 		expect(drained.speech).toContain('"$1.99"');
 		expect(drained.speech).not.toContain("all good");
+	});
+
+	it("binds a question reported as ticket 1 to the only open ticket", async () => {
+		const { runtime } = setup(() => result("unused"));
+		runtime.armLoop();
+		runtime.evalDecision({ title: "Pace", scope: "Write src/pace.ts after the answer", strength: "explicit", decision: "accept", reason: "user asked" });
+		const text = runtime.recordReport("1", "waiting", "Waiting for the choice", {
+			title: "pace(n) behavior",
+			text: "Should pace(n) return n or n * 2?",
+			options: ["keep", "double"],
+			key: "pace",
+		});
+		expect(text).toContain("t1");
+		expect(runtime.state.tickets[0]?.attention?.options).toEqual(["keep", "double"]);
+		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto" });
+		expect(drained.dispatched).toBe(0);
 	});
 
 	it("shows one Router question from the receipt and does not invent a second", async () => {
