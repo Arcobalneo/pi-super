@@ -1,4 +1,6 @@
 import type {
+	Baseline,
+	Constraints,
 	Attention,
 	DecisionKind,
 	Fact,
@@ -263,6 +265,8 @@ function seedTicket(seed: TicketSeed): Ticket {
 		lane: seed.lane ?? "code",
 		hops: seed.hops,
 		parentId: seed.parentId,
+		constraints: seed.constraints,
+		baseline: seed.baseline,
 		answers: [],
 		notices: [],
 		later: [],
@@ -310,6 +314,8 @@ function parseTicketSeed(value: unknown): TicketSeed | undefined {
 		hops: record.hops,
 		parentId: isString(record.parentId) ? record.parentId : undefined,
 		data,
+		constraints: parseConstraints(record.constraints),
+		baseline: parseBaseline(record.baseline),
 	};
 }
 
@@ -364,4 +370,23 @@ function isDecision(value: unknown): value is DecisionKind {
 
 function isLane(value: unknown): value is Lane {
 	return value === "code" || value === "review" || value === "answer";
+}
+
+function parseConstraints(value: unknown): Constraints | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const r = value as Record<string, unknown>;
+	const files = stringList(r.files);
+	return {
+		askFirst: r.askFirst === true || undefined,
+		noNewDeps: r.noNewDeps === true || undefined,
+		noCommit: r.noCommit === true || undefined,
+		files: files && files.length > 0 ? files : undefined,
+	};
+}
+
+function parseBaseline(value: unknown): Baseline | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const r = value as Record<string, unknown>;
+	if (!isString(r.status)) return undefined;
+	return { head: isString(r.head) ? r.head : undefined, status: r.status, deps: stringList(r.deps) ?? [] };
 }

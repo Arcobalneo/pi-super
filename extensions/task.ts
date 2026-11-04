@@ -1,5 +1,6 @@
 import type { Ticket } from "./types.ts";
 import { truncate } from "./text.ts";
+import { describeConstraints } from "./constraints.ts";
 
 export function buildTask(input: {
 	ticket: Ticket;
@@ -18,6 +19,11 @@ export function buildTask(input: {
 		"Work:",
 		input.work.trim(),
 	];
+	const constraints = describeConstraints(input.ticket.constraints, input.ticket.answers.length > 0);
+	if (constraints.length > 0) {
+		lines.push("", "Constraints from the person (the kernel checks each one before ready):");
+		for (const line of constraints) lines.push(`- ${line}`);
+	}
 	if (input.ticket.answers.length > 0) {
 		lines.push("", "Answers already given:");
 		for (const answer of input.ticket.answers) lines.push(`- ${answer.key}: ${answer.choice}`);

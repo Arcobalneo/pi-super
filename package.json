@@ -1,6 +1,6 @@
 {
   "name": "pi-super",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pi package that turns the main session into a Super-agent Router. The person talks only to that session; workers, events, and the loop stay underneath.",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["pi-package", "pi", "pi-extension", "superagent", "router", "autoloop"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "superagent",
+    "router",
+    "autoloop"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },
@@ -31,9 +38,15 @@
     "LICENSE"
   ],
   "pi": {
-    "extensions": ["./extensions/index.ts"],
-    "skills": ["./skills"],
-    "prompts": ["./prompts"],
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ],
     "changelogPath": "./CHANGELOG.md"
   },
   "scripts": {

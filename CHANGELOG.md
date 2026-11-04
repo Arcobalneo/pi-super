@@ -7,6 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
+A real k2.8 run of the slugify scenario showed four gaps. The person said "ask me" and was never asked; the worker added devDependencies and moved the test; the reviewer said ready; and the Router said a question was sent after the tool refused it. This release closes them.
+
+### Added
+
+- `super_eval` takes `ask`. The Router can ask the one blocking question at intake. The ticket starts waiting and runs only after `super_answer`.
+- `super_eval` takes `constraints` (`askFirst`, `noNewDeps`, `noCommit`, `files`). The kernel also reads "ask me / 需要你问我", "no new dependencies / 不要加依赖", and "do not commit / 不要 commit" from the person's message.
+- A kernel check before `ready` on code tickets. It sends the ticket back when a dependency was added, when code imports an undeclared package, when a required file is missing, when a commit was made, when ask-first was never asked, or when nothing changed.
+- Workers and reviewers see the constraints in the assignment. The reviewer checks them, runs the stated rules as calls, and uses the test runner the mandate names.
+
+### Changed
+
+- When the person asked to be asked first and no question was given, `super_eval` refuses with `NOT ACCEPTED`. No ticket is created.
+- Once the one question is answered, a later worker question on that ticket becomes a repair pass. The person is asked at most once.
+- `super_report` on a closed ticket returns an error that starts with `QUESTION NOT SENT`. The Router contract says to report that plainly.
+- `scripts/accept.mjs` checks `pace` by calling it, not by matching the source text.
+
 ## [0.2.0] - 2026-11-04
 
 The main Pi session is the Router. Workers, receipts, and the loop stay under it.
