@@ -3,17 +3,16 @@
 import type { Lane } from "./types.ts";
 
 export const ROUTER_CONTRACT = [
-	"You are the Router for this session. The person talks only to you.",
-	"You admit work and report results. You do not implement, edit files, or run shell commands. Workers do that, and they have no channel to the person.",
-	"When the person asks for work, call super_eval once: decision accept, strength explicit, scope is the mandate, lane is code (a change), review (read-only review), or answer (a question about the repo). Confirm in one sentence what you will do, then stop. The loop runs the workers.",
-	"When a message is not a request, call super_eval with ignore, or answer a status question in one sentence.",
-	"Copy every constraint the person stated into super_eval constraints (askFirst, noNewDeps, noCommit, files with exact paths).",
-	"If the person left a decision open or asked you to ask them, put that one question in super_eval ask. Do not decide it, and do not leave it for workers. Then stop.",
-	"Ask at most one concrete question, and only when work cannot continue without that decision.",
-	"A tool result that starts with NOT ACCEPTED, QUESTION NOT SENT, or NOT RECORDED means it failed. Say so plainly. Never tell the person a question was sent unless a tool result says it is open.",
-	"If the person answers an open question, call super_answer and stop. Do not admit a second ticket for the same answer.",
-	"A message that starts with \"From the worker receipt:\" is already the summary. Do not restate it. Do not add a file, check, name, or command that the receipt does not contain.",
-	"Stay under 100 words. Report a failure as a failure. Do not claim work is done unless the receipt says ready.",
+	"You are the Router for this session. The person talks only to you. You route; workers do the work and never talk to the person.",
+	"You never implement, edit files, or run commands, and you do not plan, break down, or add requirements to a request. Workers receive the person's own words verbatim and derive requirements from them.",
+	"For each message pick one super_eval decision: accept (new work), attach (a follow-up that points at an existing ticket: it is delivered to that ticket verbatim and resumes it), stop (the person asks to stop a ticket), or ignore (not a request).",
+	"accept: a short title, lane (code changes files in the repo, task produces a non-code deliverable such as a document or research notes, review is a read-only review, answer is a question about the repo), and at most a 30-word routing note with background only. When the person names several pieces, split them at intake in the same turn: one accept per piece, after for pieces that must wait. Otherwise keep it as one ticket.",
+	"When a ticket has an open question and the person replies in their own words instead of picking an option, pass their words verbatim to super_answer. Never write a follow-up question yourself.",
+	"Ask at intake only when the person explicitly asked to be consulted first or explicitly left an either/or to you to bring back. Never invent a question about details the worker can decide (tooling, file layout, test style). When you do ask, put that one question in super_eval ask with options. The tool returns the question; reply with exactly that text and nothing else.",
+	"If the person answers an open question, call super_answer and stop.",
+	"A message that starts with \"From the worker receipt:\" is already shown to the person. Do not restate it.",
+	"A tool result that starts with NOT ACCEPTED, NOT ATTACHED, NOT RECORDED, or QUESTION NOT SENT means nothing happened. Say so plainly. Never claim a question was sent or work was done unless a tool result says so.",
+	"Use super_recall with a ticket id when the person refers to earlier work. Stay under 100 words. After accept or attach, confirm in one sentence and stop.",
 ].join("\n");
 
 export const PLAN_CONTRACT = [
@@ -35,7 +34,7 @@ const HEAVY = new Set(["edit", "write", "bash", "super_dispatch"]);
 /** Tools the Router may see. Coding tools and manual dispatch stay off. */
 export function routerTools(active: readonly string[]): string[] {
 	const kept = active.filter((name) => !HEAVY.has(name));
-	return [...new Set([...kept, "read", "grep", "find", "ls", "super_eval", "super_answer", "super_status", "super_report"])];
+	return [...new Set([...kept, "read", "grep", "find", "ls", "super_eval", "super_answer", "super_status", "super_report", "super_recall"])];
 }
 
 export type PipelinePhase = "initial" | "repair";
@@ -64,46 +63,43 @@ export function pipelineFor(lane: Lane, names: readonly string[], phase: Pipelin
 	}));
 }
 
+const RECEIPT_RULES =
+	"End with one pi-super receipt. ready needs checks (commands the kernel reruns to prove the result) and changed (files you created or changed). Use ask for one decision only the person can make, dropped when nothing needs doing, failed when you cannot finish.";
+
 function roleTask(agent: string, final: boolean): string {
 	switch (agent) {
 		case "scout":
 			return final
-				? "Answer the mandate from the repository. Do not edit files. End with one pi-super receipt."
-				: "Map the files that matter. Do not edit files. Do not emit a receipt unless you must ask the person one question or you cannot continue.\n\n{previous}";
+				? "Answer the original request from the repository and sources you can read. Do not edit files. End with one pi-super receipt whose summary is the answer."
+				: "Map what matters for the original request: files, sources, facts, open decisions. Do not edit files. Emit a receipt only to ask the person one question or to report you cannot continue.\n\n{previous}";
 		case "planner":
-			return "Write a concrete plan a worker can execute. Do not edit files. Do not emit a receipt unless one decision is required before any edit.\n\n{previous}";
+			return "Write a short plan a worker can execute for the original request, in its own terms. List any decision only the person can make. Do not edit files. Emit a receipt only when such a decision blocks every next step.\n\n{previous}";
 		case "worker":
 			return final
-				? "Implement the mandate. End with one pi-super receipt. Use ready only when the mandate is done.\n\n{previous}"
-				: "Implement the mandate. A reviewer runs after you. Do not emit a receipt unless you must ask one question or you failed. Summarize the change.\n\n{previous}";
+				? `Produce the deliverable the original request asks for. ${RECEIPT_RULES}\n\n{previous}`
+				: "Produce the deliverable the original request asks for. A reviewer checks it after you. Emit a receipt only to ask one question or report failure. End with what you changed and how you checked it.\n\n{previous}";
 		case "reviewer":
 			return [
-				"Check the files against every acceptance criterion in the mandate.",
-				"A criterion is a required behavior or an exact check, such as greet(\"Ada\") === \"Hello, Ada!\".",
-				"Use ready only when each criterion is present. Quote the criterion and the file line that satisfies it.",
-				"If a test or result uses a different literal than the mandate, do not say ready. Use progress and name both literals so the worker can fix it.",
-				"Do not claim a command passed unless you ran it. Use ask only when a person must choose. Do not edit files.",
+				"Review the deliverable against the original request, word by word: every requirement, constraint, example, file location, and limit the person stated, and every decision under Decided.",
+				"Run what proves it: the project's tests, the person's examples as real calls, or reads of the produced file. Do not trust the worker's summary. Do not edit files.",
+				"ready only when every point holds. Otherwise progress, naming each gap so the worker can fix it.",
+				RECEIPT_RULES,
 				"",
 				"{previous}",
 			].join("\n");
 		default:
-			return "Do the mandate, then end with one pi-super receipt.\n\n{previous}";
+			return `Do the ticket. ${RECEIPT_RULES}\n\n{previous}`;
 	}
 }
 
 function repairTask(agent: string): string {
 	if (agent === "worker") {
-		return [
-			"The reviewer rejected the result. Fix every mismatch named in the previous report.",
-			"If a call returned the wrong value, change the function so that call returns the expected value. Putting the expected string in a comment or in a different function is not a fix.",
-			"",
-			"{previous}",
-		].join("\n");
+		return "The review found gaps against the original request. Fix every gap named in the previous report, then summarize what changed.\n\n{previous}";
 	}
 	return [
-		"Review the files again against every acceptance criterion in the mandate.",
-		"Use ready only if each required literal is now present. Use progress if any mismatch remains, and name it.",
-		"Do not edit files.",
+		"Review the deliverable again against the original request, word by word. Rerun the checks.",
+		"ready only when every gap is closed.",
+		RECEIPT_RULES,
 		"",
 		"{previous}",
 	].join("\n");
@@ -120,27 +116,7 @@ export interface GroundedQuestion {
 	title: string;
 	evidence: string;
 	options: string[];
-}
-
-/**
- * The text the person sees. It is assembled from receipt fields only.
- * A fact that is not in `evidence` cannot appear, because nothing else is copied in.
- */
-/** Quoted acceptance checks in a mandate, such as `"$1.99"`. */
-export function acceptanceLiterals(scope: string): string[] {
-	const found: string[] = [];
-	for (const match of scope.matchAll(/"([^"\n]{1,120})"|'([^'\n]{1,120})'/g)) {
-		const value = (match[1] ?? match[2] ?? "").trim();
-		// Option words such as "keep" are not file checks. A literal with a
-		// digit or symbol, such as "$1.99", is.
-		if (value && /[^A-Za-z\s]/.test(value) && !found.includes(value)) found.push(value);
-	}
-	return found;
-}
-
-/** Literals the mandate quotes that do not appear in the project text. */
-export function missingAcceptanceLiterals(scope: string, corpus: string): string[] {
-	return acceptanceLiterals(scope).filter((literal) => !corpus.includes(literal));
+	recommend?: number;
 }
 
 export function groundedSpeech(input: {
@@ -160,7 +136,11 @@ export function groundedSpeech(input: {
 	if (input.question) {
 		lines.push(`${input.question.id} needs you: ${input.question.title}`);
 		lines.push(input.question.evidence.trim());
-		lines.push(input.question.options.map((option, index) => `${index + 1}. ${option}`).join("\n"));
+		lines.push(
+			input.question.options
+				.map((option, index) => `${index + 1}. ${option}${input.question?.recommend === index ? "（推荐 / recommended）" : ""}`)
+				.join("\n"),
+		);
 		if (input.extraQuestions > 0) lines.push(`${input.extraQuestions} other question(s) stay queued.`);
 	}
 	if (input.hopNote) lines.push(input.hopNote);

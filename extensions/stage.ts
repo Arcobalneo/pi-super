@@ -52,7 +52,9 @@ export function selectTickets(
 	request: { mode: "auto" | "explicit"; ids?: string[]; ignoreHopLimit?: boolean },
 ): { tickets: Ticket[]; error?: string } {
 	if (request.mode === "auto") {
-		return { tickets: state.tickets.filter((ticket) => isAutoRunnable(ticket, rules.hopLimit)) };
+		return {
+			tickets: state.tickets.filter((ticket) => isAutoRunnable(ticket, rules.hopLimit) && dependenciesDone(state, ticket)),
+		};
 	}
 	const ids = request.ids ?? [];
 	if (ids.length === 0) return { tickets: [], error: "Name a ticket id." };
@@ -118,8 +120,17 @@ export function formatStatus(state: SuperState, rules: SuperRules, rulesError?: 
 	lines.push(`policy ${rules.hopLimit} hops, parallel ${rules.parallel}, tell ${rules.tell}, inferred ${rules.acceptInferred ? "on" : "off"}`);
 	if (state.tickets.length === 0) lines.push("No tickets.");
 	for (const ticket of state.tickets) {
-		lines.push(`${ticket.id}  ${ticketStage(ticket)}  hops ${ticket.hops}/${rules.hopLimit}  ${ticket.title}`);
+		const spent = ticket.spent ? `  ${ticket.spent.runs} runs ${ticket.spent.tokens} tok $${ticket.spent.cost.toFixed(4)}` : "";
+		lines.push(`${ticket.id}  ${ticketStage(ticket)}  hops ${ticket.hops}/${rules.hopLimit}${spent}  ${ticket.title}`);
+		// A ticket that waits shows why, so the person need not open its history (dsh-session-superagent docs/kb/status-text-shows-exceptions.md).
+		const kind = ticket.assignment?.reportKind;
+		if (ticket.status === "open" && (ticket.attention || kind === "blocked" || kind === "failed")) {
+			const reason = ticket.attention ? `asks: ${ticket.attention.title}` : `${kind}: ${ticket.assignment?.summary ?? ""}`;
+			lines.push(`    ${reason.length > 160 ? `${reason.slice(0, 157)}...` : reason}`);
+		}
 	}
+	const total = state.tickets.reduce((sum, ticket) => ({ tokens: sum.tokens + (ticket.spent?.tokens ?? 0), cost: sum.cost + (ticket.spent?.cost ?? 0) }), { tokens: 0, cost: 0 });
+	if (total.tokens > 0) lines.push(`spent ${total.tokens} tokens, $${total.cost.toFixed(4)}`);
 	for (const ticket of state.tickets) {
 		for (const later of ticket.later) lines.push(`${ticket.id} later ${later.key}: ${later.about}`);
 	}
@@ -187,4 +198,22 @@ function formatFact(fact: SuperState["facts"][number]): string {
 		default:
 			return "unknown fact";
 	}
+}
+
+/** A ticket with `after` runs only once every ticket it waits for ended completed. */
+export function dependenciesDone(state: SuperState, ticket: Ticket): boolean {
+	return (ticket.after ?? []).every((id) => state.tickets.find((item) => item.id === id)?.outcome === "completed");
+}
+
+/** Dependencies that ended without completing. The waiting ticket cannot run. */
+export function brokenDependencies(state: SuperState, ticket: Ticket): Ticket[] {
+	return (ticket.after ?? [])
+		.map((id) => state.tickets.find((item) => item.id === id))
+		.filter((dep): dep is Ticket =>
+			Boolean(
+				dep &&
+					((dep.status === "ended" && dep.outcome !== "completed") ||
+						(dep.status === "open" && (dep.assignment?.reportKind === "failed" || dep.assignment?.reportKind === "blocked"))),
+			),
+		);
 }

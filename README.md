@@ -75,12 +75,15 @@ Router 工具：`super_eval`、`super_answer`、`super_report`、`super_status`�
 ```json
 {
   "hopLimit": 8,
+  "stepTimeoutMinutes": 30,
   "parallel": 4,
   "tell": "needed",
   "acceptInferred": true,
   "askFirst": ["rm -rf", "git push --force", "git push -f", "git reset --hard", "drop table", "delete data", "spend money", "external message"]
 }
 ```
+
+`stepTimeoutMinutes` 是每个角色每轮的截止时间（0.25–240）。超时或崩溃会在同一 session 里重派一次。
 
 一轮流水线只计 1 跳。提问和 later 不清零。`/super run <id>` 可以越过这一次上限。
 
@@ -89,6 +92,43 @@ Router 工具：`super_eval`、`super_answer`、`super_report`、`super_status`�
 `acceptInferred: false` 时，子进程抛出的后续事件只记账，不建工单。
 
 事件正文和回执里的 `summary` 放进 DATA。它们是资料，不是指令。
+
+## 设计参考 / Design references
+
+pi-super 的架构直接参考以下原帖和三个仓库。这里写明每一部分出自哪里；每一行写明了对应的文件。
+
+- 原帖：[DeepSeek Harness — superagent 设计](https://x.com/DeepSeekHarness/status/2116857257245987236)
+- [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)
+- [KKKKhazix/agent-autoloop](https://github.com/KKKKhazix/agent-autoloop)
+- [MYCF711/dsh-session-superagent](https://github.com/MYCF711/dsh-session-superagent)
+
+| pi-super 的部分 | 来源 |
+|---|---|
+| 两层结构：Router 只分发、不执行；worker 隔离、不与人对话 | 原帖；prototype `src/core/evals.ts`（main Session 只做决策） |
+| 不改写请求：ticket 原样保存原话 `inputs`，worker 从原话推导需求，Router 只写 note | 原帖"不改写"；prototype `Ticket.inputs` / `src/executor/dsh.ts` |
+| 路由决策 accept / attach / stop / ignore | prototype `src/core/evals.ts` `decide` / `decideEval` |
+| 报告状态 ready / progress / blocked / failed / dropped；blocked、failed 时停下等人（含 lane 中途的 scout/planner） | prototype `src/core/stage.ts`、`src/core/model.ts` `waitsForPerson` |
+| 每个 ticket、每个角色一个持久 session | prototype 每张工单一个 Executor Session；autoloop "续做接原会话" |
+| 回执写错只重写回执、不重做业务 | autoloop `docs/protocol.md`（"回执写错不重做业务"） |
+| ask 带 `key` / `recommend` / `about`，同 key 不重复问，已决定的回填 | autoloop `docs/protocol.md`（`ask` 的 `key` 范围） |
+| hop 上限默认 8 | autoloop 的 hop TTL |
+| grounded ready：必须给 `checks` 和 `changed`，kernel 重跑；拒绝不可能失败的检查 | session-superagent `docs/kb/acceptance-criteria.md`（完成标准可观测）、`gate-mutation-check.md`、`found-problem-but-exit-zero.md`，以及"交付 ≠ 行动" |
+| 入口问题只出现一次，Router 不自写追问 | 原帖"不复述"；prototype 由 worker 提出 human_action、Router 原样转达 |
+| `after` 依赖、`super_recall` 回看历史 ticket | 原帖 Chain of Recall；prototype ticket 关联 |
+| 崩溃、非零退出或超时的一轮，在同一 session 里自动重派一次；第二次仍失败则报 failed，并提示 `/super run <id>` | autoloop `kernel/decide.ts` `retryLater`；prototype `src/core/tickets.ts` `retry` / `src/core/stage.ts` `canRetry` |
+| 每个角色每轮有截止时间 `stepTimeoutMinutes`（默认 30） | autoloop `worker/worker.ts` `TIMEOUT_MINUTES` |
+| 没跑成的一轮只能留通知，丢弃 ask 和 events | autoloop `kernel/decide.ts` `retryLater`（"没跑成的一轮只能发通知"） |
+| 回执最多重写两次 | autoloop `docs/protocol.md`（"最多两次"） |
+| 只追加的事实账本，重启后重放；进程死掉时还标着 running 的 assignment 会被收回、重跑 | autoloop `docs/protocol.md`"结构与预算"、`kernel/decide.ts` `RUN_LEASE` |
+| `/super status` 显示每个 ticket 的运行次数、tokens、花费；等人的 ticket 显示原因 | autoloop `docs/protocol.md` `usage`；session-superagent `docs/kb/status-text-shows-exceptions.md` |
+
+没有采用的部分：
+- 多通道接入、云端隔离、全双工语音：属于部署层，不在 pi 扩展的范围内。
+- 独立 Watchdog 进程、心跳租约：pi 是单进程会话，用每步截止时间加重启后收回代替。
+- 指数退避重试：交互式会话里人在等，只立即重派一次。
+- 上下文压缩：由 pi 宿主的 session 机制负责。
+- 按 thread 把追问分给 worker（prototype `workerDecides`）：pi 只有一条主线程。
+- Router 是否 stop、是否保持 blocked：参考仓库同样只要求明确的人工指令，这属于模型判断。
 
 ## 开发 / Develop
 
@@ -101,7 +141,7 @@ npm run check
 
 Host packages (`@earendil-works/pi-*`, `typebox`) are `peerDependencies` with `"*"`. They are also `devDependencies` so this repo can typecheck. Do not move them to `dependencies`.
 
-真实模型验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。验收脚本不包含密钥：
+真实模型验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。`scripts/accept.mjs` 跑 v0.3 的五个场景（ask-first、多文件重构、写作任务、拆分多 ticket、应 blocked 的任务），`ACCEPT_ONLY=ask,blocked` 只跑其中几个。脚本不包含密钥：
 
 ```bash
 KIMI_KEY_FILE=/path/to/key.txt node scripts/accept.mjs

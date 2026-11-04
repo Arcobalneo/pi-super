@@ -32,12 +32,13 @@ export function buildSubagentArgs(input: {
 	systemPromptPath?: string;
 	trust: "approve" | "no-approve";
 	task: string;
+	session?: { dir: string; id: string };
 }): string[] {
 	const args = [
 		"--mode",
 		"json",
 		"--print",
-		"--no-session",
+		...(input.session ? ["--session-dir", input.session.dir, "--session-id", input.session.id] : ["--no-session"]),
 		"--no-extensions",
 		"--no-skills",
 		"--no-prompt-templates",

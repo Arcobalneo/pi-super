@@ -7,6 +7,8 @@ export interface ReceiptAsk {
 	text: string;
 	options: string[];
 	key: string;
+	recommend?: number;
+	about?: string;
 }
 
 export interface ReceiptNotice {
@@ -32,6 +34,8 @@ export interface Receipt {
 	notice?: ReceiptNotice;
 	later?: ReceiptLater;
 	events: ReceiptEvent[];
+	checks: string[];
+	changed: string[];
 }
 
 export type ReceiptParse =
@@ -46,15 +50,34 @@ export interface Interpreted {
 	notice?: ReceiptNotice;
 	later?: ReceiptLater;
 	events: ReceiptEvent[];
+	checks?: string[];
+	changed?: string[];
 	receiptError?: string;
+	/** True when no receipt block was found at all. */
+	receiptMissing?: boolean;
 }
 
 const FENCE = /```pi-super[^\n]*\n([\s\S]*?)```/g;
+/** Models sometimes label the block json. Accept it only when it looks like a receipt. */
+const JSON_FENCE = /```(?:json|jsonc)?[ \t]*\n(\{[\s\S]*?\})\s*```/g;
+const SUMMARY_LIMIT = 1200;
 const REPORTS = new Set<ReportKind>(["progress", "waiting", "ready", "blocked", "failed", "dropped"]);
 
+function receiptBlock(text: string): string | undefined {
+	const tagged = [...text.matchAll(FENCE)].at(-1)?.[1];
+	if (tagged !== undefined) return tagged;
+	const loose = [...text.matchAll(JSON_FENCE)].map((match) => match[1]!).filter((raw) => /"report"\s*:/.test(raw));
+	if (loose.length > 0) return loose.at(-1);
+	const tail = text.trimEnd();
+	if (tail.endsWith("}")) {
+		const start = tail.lastIndexOf('{"report"');
+		if (start >= 0) return tail.slice(start);
+	}
+	return undefined;
+}
+
 export function parseReceipt(text: string): ReceiptParse {
-	const matches = [...text.matchAll(FENCE)];
-	const raw = matches.at(-1)?.[1];
+	const raw = receiptBlock(text);
 	if (raw === undefined) return { status: "absent" };
 	let value: unknown;
 	try {
@@ -71,7 +94,19 @@ export function parseReceipt(text: string): ReceiptParse {
 }
 
 export function stripReceiptFence(text: string): string {
-	return text.replace(FENCE, "").trim();
+	const block = receiptBlock(text);
+	let out = text.replace(FENCE, "").replace(JSON_FENCE, (match, raw: string) => (/"report"\s*:/.test(raw) ? "" : match));
+	if (block && out.includes(block)) out = out.replace(block, "");
+	return out.trim();
+}
+
+/** The prose a person can read: the last paragraph, whole, never a cut first line. */
+export function proseSummary(text: string): string {
+	const paragraphs = stripReceiptFence(text)
+		.split(/\n\s*\n/)
+		.map((part) => part.trim())
+		.filter(Boolean);
+	return clampText(paragraphs.at(-1) ?? "", SUMMARY_LIMIT);
 }
 
 /**
@@ -81,9 +116,9 @@ export function stripReceiptFence(text: string): string {
  */
 export function interpretOutput(text: string, exitCode: number, stderr: string): Interpreted {
 	const parsed = parseReceipt(text);
-	const prose = firstLine(stripReceiptFence(text));
+	const prose = proseSummary(text);
 	if (parsed.status === "absent") {
-		if (exitCode === 0) return { report: "ready", summary: prose, events: [] };
+		if (exitCode === 0) return { report: "ready", summary: prose, events: [], receiptMissing: true };
 		return { report: "failed", summary: firstLine(stderr.trim() || prose), events: [] };
 	}
 	if (parsed.status === "invalid") {
@@ -109,11 +144,13 @@ export function interpretOutput(text: string, exitCode: number, stderr: string):
 	}
 	return {
 		report,
-		summary: clampText(receipt.summary?.trim() || prose, 4000),
+		summary: clampText(receipt.summary?.trim() || prose, SUMMARY_LIMIT),
 		ask,
 		notice: receipt.notice,
 		later,
 		events,
+		checks: receipt.checks,
+		changed: receipt.changed,
 	};
 }
 
@@ -128,12 +165,25 @@ function normalizeReceipt(record: Record<string, unknown>): Receipt | undefined 
 	const notice = normalizeNotice(record.notice);
 	const later = normalizeLater(record.later);
 	const events = normalizeEvents(record.events);
+	const checks = normalizeStrings(record.checks, 8, 500, (item) =>
+		item && typeof item === "object" && typeof (item as { run?: unknown }).run === "string" ? (item as { run: string }).run : item,
+	);
+	const changed = normalizeStrings(record.changed, 50, 300);
 	if (record.ask !== undefined && record.ask !== null && !ask) return undefined;
 	if (record.notice !== undefined && record.notice !== null && !notice) return undefined;
 	if (record.later !== undefined && record.later !== null && !later) return undefined;
 	if (record.report !== undefined && !report) return undefined;
 	if (!report && !summary && !ask && !notice && !later && events.length === 0) return undefined;
-	return { report, summary, ask, notice, later, events };
+	return { report, summary, ask, notice, later, events, checks, changed };
+}
+
+function normalizeStrings(value: unknown, max: number, len: number, map: (item: unknown) => unknown = (item) => item): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map(map)
+		.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+		.slice(0, max)
+		.map((item) => clampText(item.trim(), len));
 }
 
 /** `ask` and `later` are lifecycle names workers may write. The ledger stores the report kind. */
@@ -166,7 +216,12 @@ function normalizeAsk(value: unknown): ReceiptAsk | undefined {
 		options = record.options.map((option) => clampText(String(option), 80));
 	}
 	const key = typeof record.key === "string" && record.key.trim() ? slug(record.key) : slug(title);
-	return { title, text, options, key };
+	const recommend =
+		typeof record.recommend === "number" && Number.isInteger(record.recommend) && record.recommend >= 0 && record.recommend < options.length
+			? record.recommend
+			: undefined;
+	const about = typeof record.about === "string" && record.about.trim() ? clampText(record.about, 1000) : undefined;
+	return { title, text, options, key, ...(recommend !== undefined ? { recommend } : {}), ...(about ? { about } : {}) };
 }
 
 function normalizeNotice(value: unknown): ReceiptNotice | undefined {

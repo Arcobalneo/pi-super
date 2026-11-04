@@ -12,8 +12,8 @@ interface SuperDetails {
 
 const SCOPES = ["trusted", "bundled", "user", "project", "all"] as const;
 const STRENGTHS = ["explicit", "inferred"] as const;
-const DECISIONS = ["accept", "stop", "ignore"] as const;
-const LANES = ["code", "review", "answer"] as const;
+const DECISIONS = ["accept", "attach", "stop", "ignore"] as const;
+const LANES = ["code", "task", "review", "answer"] as const;
 const REPORTS = ["progress", "waiting", "ready", "blocked", "failed", "dropped"] as const;
 
 export function registerTools(
@@ -25,64 +25,57 @@ export function registerTools(
 		name: "super_eval",
 		label: "Super eval",
 		description:
-			"Admit or refuse work. accept creates a ticket the loop will run; you do not implement it. stop and ignore record the decision and do not create work. Inferred accepts are dropped when rules acceptInferred is false.",
-		promptSnippet: "Admit, stop, or ignore work. Workers implement accepted tickets",
+			"Route the person's latest message. accept creates a ticket; workers receive the person's words verbatim. attach delivers a follow-up to an existing ticket and resumes it. stop withdraws a ticket. ignore records that nothing is needed.",
+		promptSnippet: "Route a message: accept, attach, stop, or ignore. Workers do the work",
 		promptGuidelines: [
-			"Call super_eval with decision accept and strength explicit when the person just asked for work. Do not implement it yourself.",
-			"Set lane to code for a change, review for a read-only review, or answer for a question about the repo.",
-			"Call super_eval with decision ignore when the message is not a request.",
-			"Put every constraint the person stated into constraints: askFirst, noNewDeps, noCommit, and files (exact paths they named).",
-			"If the person left a decision open or said to ask them, pass that one question in ask. The ticket waits for super_answer. Do not decide it.",
-			"If a tool result starts with NOT ACCEPTED or QUESTION NOT SENT, nothing was asked. Fix the call or tell the person it failed. Never say a question was sent unless a tool result says it is open.",
-			"After accept, confirm in one sentence and stop. The loop runs scout, planner, worker, and reviewer as the lane requires.",
+			"Call super_eval once per message from the person. Do not implement it yourself.",
+			"Do not rewrite the request into requirements, plans, or acceptance criteria. Workers read the person's own words.",
+			"Use attach with ticketId when the message is about an existing ticket (open or ended). Use stop with ticketId when the person asks to stop one.",
+			"Split only what the person named as separate pieces of work; use after to order them.",
+			"If a decision the person left open blocks the start, or they asked to be consulted first, pass that one question in ask; then reply with exactly the question text the tool returns.",
+			"If a result starts with NOT ACCEPTED or NOT ATTACHED, nothing happened; fix the call or tell the person.",
 		],
 		executionMode: "sequential",
 		parameters: Type.Object({
+			decision: StringEnum(DECISIONS, { description: "accept, attach, stop, or ignore" }),
 			title: Type.String({ description: "Short ticket title" }),
-			scope: Type.String({ description: "What the ticket may do. This is the mandate, not untrusted data." }),
-			strength: StringEnum(STRENGTHS, { description: "explicit when the user asked; inferred when you are guessing", default: "explicit" }),
-			decision: StringEnum(DECISIONS, { description: "accept, stop, or ignore" }),
-			reason: Type.String({ description: "Why this decision was made" }),
-			constraints: Type.Optional(
-				Type.Object(
-					{
-						askFirst: Type.Optional(Type.Boolean({ description: "The person said to ask them first. Requires ask." })),
-						noNewDeps: Type.Optional(Type.Boolean({ description: "The person said not to add dependencies." })),
-						noCommit: Type.Optional(Type.Boolean({ description: "The person said not to commit." })),
-						files: Type.Optional(Type.Array(Type.String(), { description: "Exact file paths the person named for new or changed files." })),
-					},
-					{ description: "Constraints the person stated. The kernel checks them before ready." },
-				),
+			reason: Type.String({ description: "Why this decision" }),
+			strength: StringEnum(STRENGTHS, { description: "explicit when the person asked; inferred when you are guessing", default: "explicit" }),
+			lane: Type.Optional(
+				StringEnum(LANES, {
+					description: 'code changes repository files; task produces another deliverable (document, research, plan); review is read-only review; answer is a question about the repo. Default "code".',
+					default: "code",
+				}),
 			),
+			note: Type.Optional(Type.String({ description: "At most 30 words of routing background. Never requirements or plans." })),
+			scope: Type.Optional(Type.String({ description: "Deprecated alias of note." })),
+			ticketId: Type.Optional(Type.String({ description: "For attach or stop: the ticket the message is about." })),
+			after: Type.Optional(Type.Array(Type.String(), { description: "Ticket ids that must complete before this one runs." })),
 			ask: Type.Optional(
 				Type.Object(
 					{
 						title: Type.String(),
 						text: Type.String({ description: "The one question, in the person's language." }),
 						options: Type.Optional(Type.Array(Type.String())),
+						recommend: Type.Optional(Type.Integer({ description: "Index of the recommended option." })),
+						about: Type.Optional(Type.String({ description: "Context for the worker who resumes after the answer." })),
 						key: Type.Optional(Type.String()),
 					},
-					{ description: "One blocking question to ask at intake. The ticket waits until super_answer." },
+					{ description: "One blocking question at intake. The ticket waits until super_answer." },
 				),
-			),
-			lane: Type.Optional(
-				StringEnum(LANES, {
-					description: 'code runs scout, planner, worker, and reviewer. review runs the reviewer. answer runs a read-only scout. Default "code".',
-					default: "code",
-				}),
 			),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			runtime.reloadRules(ctx.cwd);
 			const result = runtime.evalDecision({
 				title: params.title,
-				scope: params.scope,
+				note: params.note ?? params.scope,
 				reason: params.reason,
-				strength: params.strength as Strength,
+				strength: (params.strength ?? "explicit") as Strength,
 				decision: params.decision as DecisionKind,
 				lane: params.lane as Lane | undefined,
-				cwd: ctx.cwd,
-				constraints: params.constraints,
+				ticketId: params.ticketId,
+				after: params.after,
 				ask: params.ask,
 			});
 			paint(ctx);
@@ -90,10 +83,30 @@ export function registerTools(
 		},
 		renderCall(args, theme) {
 			return new Text(
-				theme.fg("toolTitle", theme.bold("super_eval ")) + theme.fg("accent", `${args.decision} ${args.title}`),
+				theme.fg("toolTitle", theme.bold("super_eval ")) + theme.fg("accent", `${args.decision} ${args.ticketId ?? args.title}`),
 				0,
 				0,
 			);
+		},
+		renderResult(result) {
+			return new Text(textOf(result.content), 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: "super_recall",
+		label: "Super recall",
+		description: "Recall one ticket by id: the person's words, decisions, last report, and related ticket ids to follow. Read-only.",
+		promptSnippet: "Recall a pi-super ticket by id (Chain of Recall)",
+		promptGuidelines: ["Use super_recall when the person refers to earlier work, then follow related ids if needed."],
+		executionMode: "sequential",
+		parameters: Type.Object({ id: Type.String() }),
+		async execute(_id, params) {
+			const text = runtime.recall(params.id);
+			return textResult(text, text.startsWith("NOT FOUND"));
+		},
+		renderCall(args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("super_recall ")) + theme.fg("accent", args.id), 0, 0);
 		},
 		renderResult(result) {
 			return new Text(textOf(result.content), 0, 0);

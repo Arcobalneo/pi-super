@@ -16,7 +16,7 @@ export function firstLine(text: string): string {
 export function slug(text: string): string {
 	const cleaned = text
 		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/[^\p{L}\p{N}]+/gu, "-")
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 40);
 	return cleaned || "ask";
