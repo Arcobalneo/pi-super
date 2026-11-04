@@ -107,6 +107,9 @@ export class SuperRuntime {
 	openedQuestionThisRun = false;
 	routerAsked = false;
 	userPrompt = "";
+	/** The last message that started or changed work; used when the current message only answered a question. */
+	lastRequestPrompt = "";
+	promptAnswered = false;
 	private toolsBeforeRouter?: string[];
 	private abort = new AbortController();
 	private userRules: SuperRules = { ...DEFAULT_RULES, askFirst: [...DEFAULT_RULES.askFirst] };
@@ -176,6 +179,7 @@ export class SuperRuntime {
 
 	noteUserPrompt(prompt: string): void {
 		this.userPrompt = prompt;
+		this.promptAnswered = false;
 		this.admitNudged = false;
 		this.spokeThisRun = false;
 		this.openedQuestionThisRun = false;
@@ -295,9 +299,12 @@ export class SuperRuntime {
 		isError?: boolean;
 	} {
 		const title = clampText(input.title, 200);
-		const note = clampText((input.note ?? input.scope ?? "").trim(), 400);
+		const note = clampText((input.note ?? input.scope ?? "").trim(), 240);
 		const reason = clampText(input.reason, 1000);
-		const source = clampText((input.source ?? this.userPrompt).trim() || note, 20_000);
+		// A message that only answered a question is not a request; a ticket the Router splits off then belongs to the request before it.
+		const prompt = this.promptAnswered && this.lastRequestPrompt ? this.lastRequestPrompt : this.userPrompt;
+		const source = clampText((input.source ?? prompt).trim() || note, 20_000);
+		if (input.source === undefined && !this.promptAnswered && this.userPrompt.trim()) this.lastRequestPrompt = this.userPrompt;
 		if (!title || !reason) return { text: "NOT RECORDED. title and reason are required.", isError: true };
 		const lane = input.lane ?? "code";
 		if (input.decision === "attach") return this.attach(input.ticketId, source, reason);
@@ -398,6 +405,7 @@ export class SuperRuntime {
 			return { ok: false, message: ticketId ? `${ticketId} has no open question.` : "No open question." };
 		}
 		const attention = ticket.attention;
+		this.promptAnswered = true;
 		let selected = choice.trim();
 		if (/^\d+$/.test(selected)) {
 			const option = attention.options[Number(selected) - 1];
@@ -433,7 +441,11 @@ export class SuperRuntime {
 				? `QUESTION NOT SENT. ${ticketId} is not an open ticket, so the person was NOT asked. Tell the person plainly that the question was not sent. To ask at intake, call super_eval with decision accept and ask.`
 				: `NOT RECORDED. ${ticketId} is not an open ticket.`;
 		}
+		if (ask && this.state.loopArmed && ticket.attention) {
+			return `NOT RECORDED. ${ticket.id} already has an open question, so the person was NOT asked again. If the person replied in their own words, pass those words verbatim to super_answer; the worker decides what follows.`;
+		}
 		ticketId = ticket.id;
+		this.acceptedThisRun += 1;
 		const interpreted: Interpreted = {
 			report: ask ? "blocked" : kind,
 			summary: clampText(summary, 4000),
@@ -684,6 +696,9 @@ export class SuperRuntime {
 			ticket,
 			hopLimit: this.rules.hopLimit,
 			work,
+			siblings: this.state.tickets.filter(
+				(other) => other.id !== ticket.id && other.inputs.some((input) => ticket.inputs.some((mine) => mine.text === input.text)),
+			),
 		});
 		this.apply({ type: "assignment.started", ticketId: ticket.id, assignmentId, agent: agent.name, hops });
 		const session = this.deps.sessionRoot

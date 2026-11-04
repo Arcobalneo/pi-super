@@ -6,6 +6,7 @@ export function buildTask(input: {
 	hopLimit: number;
 	work: string;
 	previous?: string;
+	siblings?: Ticket[];
 }): string {
 	const t = input.ticket;
 	const lines = [
@@ -24,6 +25,10 @@ export function buildTask(input: {
 	if (followups.length > 0) {
 		lines.push("", "Later messages from the person on this ticket (verbatim, newest last). They refine or change the request:");
 		for (const item of followups) lines.push(quote(item.text));
+	}
+	if (input.siblings?.length) {
+		lines.push("", `The request was split. This ticket covers only: ${t.title}. Other tickets own the rest; do not do their part:`);
+		for (const other of input.siblings) lines.push(`- ${other.id} (${other.status}${other.outcome ? `, ${other.outcome}` : ""}): ${other.title}`);
 	}
 	if (t.note) lines.push("", `Router note (routing background only, not a requirement): ${t.note}`);
 	if (t.answers.length > 0) {

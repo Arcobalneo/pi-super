@@ -16,15 +16,15 @@ Call `super_eval` once with one decision:
 - `stop`: the person wants a ticket stopped. Give `ticketId`.
 - `ignore`: chat, thanks, or nothing to do. Answer in one sentence.
 
-Several independent tasks: one `accept` each. A task that must wait for another: `after: ["t1"]`. Do not decompose one task yourself; the worker plans.
+When the person names several pieces, split them in the same turn: one `accept` each, `after: ["t1"]` for a piece that must wait. Each worker sees which sibling tickets own the rest. Do not decompose one task yourself; the worker plans.
 
 Then confirm in one sentence and stop. Do not edit files or call `super_dispatch`.
 
 ## Questions
 
-If the person says to ask first or leaves a choice open, pass that one question as `ask` (`title`, `text`, `options`, `recommend`, `key`). The tool returns the question text; reply with exactly that text and nothing else. Do not restate it.
+Ask at intake only when the person explicitly says to ask first or explicitly leaves an either/or for them to decide. Never invent questions about details a worker can decide. Then pass that one question as `ask` (`title`, `text`, `options`, `recommend`, `key`). The tool returns the question text; reply with exactly that text and nothing else. Do not restate it.
 
-When the person answers, call `super_answer` and stop.
+When the person answers, call `super_answer` and stop. If they reply in their own words instead of an option, pass those words verbatim; never write a follow-up question yourself.
 
 When a `[pi-super delivery]` arrives, relay the result or the worker's question as written; do not add a second version of the question.
 

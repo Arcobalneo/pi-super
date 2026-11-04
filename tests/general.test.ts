@@ -229,3 +229,38 @@ describe("sessions", () => {
 		expect(args).not.toContain("--no-session");
 	});
 });
+
+describe("split requests", () => {
+	it("tells each split ticket what its siblings own, and keeps the request when the message was only an answer", async () => {
+		const dir = repo();
+		const { runtime, tasks } = setup((task) => {
+			const id = /Ticket: (t\d+)/.exec(task)?.[1] ?? "x";
+			writeFileSync(join(dir, `${id}.txt`), id);
+			return receipt({ report: "ready", summary: id, checks: ["true"], changed: [`${id}.txt`] });
+		});
+		runtime.noteUserPrompt("Build the CLI, then bump the version. Ask me which flag style.");
+		runtime.evalDecision({ title: "CLI", strength: "explicit", decision: "accept", reason: "r", ask: { title: "Flags", text: "Style?", options: ["--long", "-s"] } });
+		runtime.noteUserPrompt("1");
+		runtime.answer(undefined, "1");
+		runtime.evalDecision({ title: "Version bump", strength: "explicit", decision: "accept", reason: "r", after: ["t1"] });
+		expect(runtime.state.tickets[1]?.inputs[0]?.text).toBe("Build the CLI, then bump the version. Ask me which flag style.");
+		await drain(runtime, dir);
+		expect(tasks[0]).toContain("This ticket covers only: CLI");
+		expect(tasks[0]).toContain("t2 (open): Version bump");
+	});
+});
+
+describe("router questions", () => {
+	it("refuses a second question written by the Router while one is open, and accepts free-text answers", async () => {
+		const dir = repo();
+		const { runtime } = setup(() => receipt({ report: "blocked", summary: "no file", ask: { title: "File?", text: "Provide it?", options: ["yes", "cancel"], key: "file" } }));
+		runtime.noteUserPrompt("Summarize data/x.csv.");
+		runtime.evalDecision({ title: "X", strength: "explicit", decision: "accept", reason: "r" });
+		await drain(runtime, dir);
+		runtime.noteUserPrompt("I can't get that file right now.");
+		const refused = runtime.recordReport("t1", "blocked", "still", { title: "Next?", text: "What now?", options: ["a", "b"], key: "next" });
+		expect(refused).toMatch(/^NOT RECORDED/);
+		expect(runtime.answer("t1", "I can't get that file right now.").ok).toBe(true);
+		expect(runtime.state.tickets[0]?.answers.at(-1)?.choice).toBe("I can't get that file right now.");
+	});
+});
