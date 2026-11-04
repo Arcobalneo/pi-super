@@ -10,6 +10,7 @@ import { addUsage, emptyUsage, mapPool, type SubagentRequest } from "./runner.ts
 import { factsFromEntries, nextId, project, reduce } from "./state.ts";
 import { explain, formatStatus, hopLimited, selectTickets, ticketStage } from "./stage.ts";
 import { buildTask } from "./task.ts";
+import { captureBaseline, constraintViolations, detectConstraints, hasConstraints, mergeConstraints } from "./constraints.ts";
 import { clampText, slug } from "./text.ts";
 import {
 	DEFAULT_AGENT,
@@ -17,6 +18,7 @@ import {
 	MAX_DRAIN_STEPS,
 	type AgentConfig,
 	type AgentScope,
+	type Constraints,
 	type DecisionKind,
 	type Fact,
 	type Lane,
@@ -251,8 +253,12 @@ export class SuperRuntime {
 		decision: DecisionKind;
 		reason: string;
 		lane?: Lane;
+		cwd?: string;
+		constraints?: Constraints;
+		ask?: { title: string; text: string; options?: string[]; key?: string };
 	}): {
 		text: string;
+		isError?: boolean;
 	} {
 		const title = clampText(input.title, 200);
 		const scope = clampText(input.scope, 4000);
@@ -266,7 +272,21 @@ export class SuperRuntime {
 			this.acceptedThisRun += 1;
 			return { text: `${decision}: ${title}. ${note}` };
 		}
+		const constraints = mergeConstraints(
+			detectConstraints(this.userPrompt),
+			input.constraints,
+			input.ask ? { askFirst: true } : undefined,
+		);
+		const askText = input.ask?.text?.trim();
+		if (constraints.askFirst && !askText) {
+			return {
+				isError: true,
+				text:
+					"NOT ACCEPTED. NO TICKET WAS CREATED AND NO QUESTION WAS SENT. The person asked to be asked first. Call super_eval again with ask {title, text, options} holding that one question. Do not tell the person anything was asked until a tool result says the question is open.",
+			};
+		}
 		const id = nextId(this.state, "t");
+		const baseline = lane === "code" ? captureBaseline(input.cwd) : undefined;
 		this.apply({
 			type: "ticket.created",
 			ticket: {
@@ -278,11 +298,27 @@ export class SuperRuntime {
 				askFirst: [...this.rules.askFirst],
 				lane,
 				hops: 0,
+				...(hasConstraints(constraints) ? { constraints } : {}),
+				...(baseline ? { baseline } : {}),
 			},
 		});
 		this.apply({ type: "decision.recorded", decision: "accept", title, reason, ticketId: id });
 		this.acceptedThisRun += 1;
 		if (!this.host.getSessionName()) this.host.setSessionName(`pi-super: ${title}`);
+		if (input.ask && askText) {
+			const options = (input.ask.options ?? []).map((item) => item.trim()).filter(Boolean);
+			const attention = {
+				id: nextId(this.state, "q"),
+				title: clampText(input.ask.title || "Question", 200),
+				text: clampText(askText, 2000),
+				options: options.length > 0 ? options : ["Continue", "Stop"],
+				key: slug(input.ask.key || input.ask.title || "question"),
+			};
+			this.apply({ type: "attention.opened", ticketId: id, attention });
+			return {
+				text: `Accepted ${id} (${input.strength}, ${lane}) waiting for the person. Question ${attention.id} is open and will be shown from the ledger. Do not restate it. Stop. When the person answers, call super_answer.`,
+			};
+		}
 		const follow = this.state.loopArmed
 			? " Workers run after this turn. Do not implement it yourself."
 			: " Call super_dispatch to run it.";
@@ -327,7 +363,11 @@ export class SuperRuntime {
 
 	recordReport(ticketId: string, kind: ReportKind, summary: string, ask?: Interpreted["ask"]): string {
 		const ticket = this.resolveOpenTicket(ticketId);
-		if (!ticket) return `${ticketId} is not an open ticket.`;
+		if (!ticket) {
+			return ask
+				? `QUESTION NOT SENT. ${ticketId} is not an open ticket, so the person was NOT asked. Tell the person plainly that the question was not sent. To ask at intake, call super_eval with decision accept and ask.`
+				: `NOT RECORDED. ${ticketId} is not an open ticket.`;
+		}
 		ticketId = ticket.id;
 		const interpreted: Interpreted = {
 			report: ask ? "blocked" : kind,
@@ -602,8 +642,12 @@ export class SuperRuntime {
 			interpreted.report === "ready" &&
 			(ticket.lane === "code" || ticket.lane === "review")
 		) {
+			const latest = this.state.tickets.find((item) => item.id === ticket.id) ?? ticket;
+			const violations = constraintViolations(request.cwd, latest);
 			const examples = parseBehaviorExamples(ticket.scope);
-			if (examples.length > 0) {
+			if (violations.length > 0) {
+				interpreted = { report: "progress", summary: `Constraint violated: ${violations.join(" ")}`, events: [] };
+			} else if (examples.length > 0) {
 				const mismatches = await runBehaviorExamples(request.cwd, examples);
 				if (mismatches.length > 0) {
 					interpreted = { report: "progress", summary: behaviorSummary(mismatches), events: [] };
@@ -618,6 +662,14 @@ export class SuperRuntime {
 					};
 				}
 			}
+		}
+		const current = this.state.tickets.find((item) => item.id === ticket.id) ?? ticket;
+		if (interpreted.ask && current.constraints?.askFirst && current.answers.length > 0) {
+			interpreted = {
+				report: "progress",
+				summary: `The person already answered the one question (${current.answers.map((item) => item.choice).join("; ")}). A second question is not allowed. Implement that answer now; do not ask permission to edit.`,
+				events: [],
+			};
 		}
 		const hard = Boolean(interpreted.ask) || interpreted.report === "failed" || interpreted.report === "blocked";
 		if (override?.interpret === "gate" && !hard) {

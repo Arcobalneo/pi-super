@@ -120,7 +120,9 @@ async function runAsk() {
 	const question = questions[0]?.attention;
 	const second = await runPi(repo, sessionDir, "ask", "double", 10 * 60 * 1000);
 	const pace = readIf(join(repo, "src", "pace.ts"));
-	const doubled = /n\s*\*\s*2|\*\s*2/.test(pace);
+	const doubled =
+		existsSync(join(repo, "src", "pace.ts")) &&
+		(await nodeEval(repo, 'import { pace } from "./src/pace.ts"; if (pace(2) !== 4 || pace(5) !== 10) process.exit(1);')).status === 0;
 	return {
 		ok:
 			first.exitCode === 0 &&

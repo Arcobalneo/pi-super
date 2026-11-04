@@ -31,6 +31,9 @@ export function registerTools(
 			"Call super_eval with decision accept and strength explicit when the person just asked for work. Do not implement it yourself.",
 			"Set lane to code for a change, review for a read-only review, or answer for a question about the repo.",
 			"Call super_eval with decision ignore when the message is not a request.",
+			"Put every constraint the person stated into constraints: askFirst, noNewDeps, noCommit, and files (exact paths they named).",
+			"If the person left a decision open or said to ask them, pass that one question in ask. The ticket waits for super_answer. Do not decide it.",
+			"If a tool result starts with NOT ACCEPTED or QUESTION NOT SENT, nothing was asked. Fix the call or tell the person it failed. Never say a question was sent unless a tool result says it is open.",
 			"After accept, confirm in one sentence and stop. The loop runs scout, planner, worker, and reviewer as the lane requires.",
 		],
 		executionMode: "sequential",
@@ -40,6 +43,28 @@ export function registerTools(
 			strength: StringEnum(STRENGTHS, { description: "explicit when the user asked; inferred when you are guessing", default: "explicit" }),
 			decision: StringEnum(DECISIONS, { description: "accept, stop, or ignore" }),
 			reason: Type.String({ description: "Why this decision was made" }),
+			constraints: Type.Optional(
+				Type.Object(
+					{
+						askFirst: Type.Optional(Type.Boolean({ description: "The person said to ask them first. Requires ask." })),
+						noNewDeps: Type.Optional(Type.Boolean({ description: "The person said not to add dependencies." })),
+						noCommit: Type.Optional(Type.Boolean({ description: "The person said not to commit." })),
+						files: Type.Optional(Type.Array(Type.String(), { description: "Exact file paths the person named for new or changed files." })),
+					},
+					{ description: "Constraints the person stated. The kernel checks them before ready." },
+				),
+			),
+			ask: Type.Optional(
+				Type.Object(
+					{
+						title: Type.String(),
+						text: Type.String({ description: "The one question, in the person's language." }),
+						options: Type.Optional(Type.Array(Type.String())),
+						key: Type.Optional(Type.String()),
+					},
+					{ description: "One blocking question to ask at intake. The ticket waits until super_answer." },
+				),
+			),
 			lane: Type.Optional(
 				StringEnum(LANES, {
 					description: 'code runs scout, planner, worker, and reviewer. review runs the reviewer. answer runs a read-only scout. Default "code".',
@@ -56,9 +81,12 @@ export function registerTools(
 				strength: params.strength as Strength,
 				decision: params.decision as DecisionKind,
 				lane: params.lane as Lane | undefined,
+				cwd: ctx.cwd,
+				constraints: params.constraints,
+				ask: params.ask,
 			});
 			paint(ctx);
-			return textResult(result.text);
+			return textResult(result.text, result.isError);
 		},
 		renderCall(args, theme) {
 			return new Text(
@@ -204,8 +232,9 @@ export function registerTools(
 					}
 				: undefined);
 			paint(ctx);
-			const shown = params.ask ? `${text} The question is shown from the receipt. Do not restate it. Stop.` : text;
-			return textResult(shown);
+			const failed = text.startsWith("QUESTION NOT SENT") || text.startsWith("NOT RECORDED");
+			const shown = params.ask && !failed ? `${text} The question is shown from the receipt. Do not restate it. Stop.` : text;
+			return textResult(shown, failed);
 		},
 		renderCall(args, theme) {
 			return new Text(theme.fg("toolTitle", theme.bold("super_report ")) + theme.fg("accent", args.ticketId), 0, 0);

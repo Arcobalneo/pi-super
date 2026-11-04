@@ -29,6 +29,19 @@ export interface SuperRules {
 	askFirst: string[];
 }
 
+export interface Constraints {
+	askFirst?: boolean;
+	noNewDeps?: boolean;
+	noCommit?: boolean;
+	files?: string[];
+}
+
+export interface Baseline {
+	head?: string;
+	status: string;
+	deps: string[];
+}
+
 export interface Attention {
 	id: string;
 	title: string;
@@ -62,6 +75,8 @@ export interface Ticket {
 	lane: Lane;
 	hops: number;
 	parentId?: string;
+	constraints?: Constraints;
+	baseline?: Baseline;
 	assignment?: Assignment;
 	attention?: Attention;
 	answers: { key: string; choice: string }[];
@@ -81,6 +96,8 @@ export interface TicketSeed {
 	hops: number;
 	parentId?: string;
 	data?: TicketData[];
+	constraints?: Constraints;
+	baseline?: Baseline;
 }
 
 export interface DecisionRecord {

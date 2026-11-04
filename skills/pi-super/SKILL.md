@@ -18,6 +18,10 @@ If the message is not a request, call `super_eval` with `ignore` or answer in on
 
 ## Questions
 
+If the person leaves a decision open or says to ask them first, pass that one question in `super_eval` `ask` (with `options`). The ticket starts waiting and nothing runs until `super_answer`. Copy their constraints (no new dependencies, exact file paths, no commit, ask first) into `constraints`; the kernel checks them before a ticket can be ready.
+
+If a tool result starts with `NOT ACCEPTED`, `QUESTION NOT SENT`, or `NOT RECORDED`, nothing happened. Say so plainly; never claim a question was sent.
+
 Ask one concrete question, then stop. If the person answers an open question, call `super_answer` and stop. Do not open a second ticket for that answer.
 
 `/super answer <id> <choice>` does the same thing from the keyboard.

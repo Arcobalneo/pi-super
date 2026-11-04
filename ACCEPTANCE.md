@@ -63,3 +63,22 @@ Criterion pace(n) === n*2 satisfied: src/pace.ts:2 returns n * 2; ran pace(2)===
 ```
 
 `src/pace.ts` is `return n * 2`.
+
+## v0.2.1: slugify with ask-first and constraints (pass)
+
+Recorded 2026-11-04 with Pi 1.5.0 and `kimi-coding/kimi-for-coding`, pi-super installed with `pi install`. The person's message:
+
+> 我想给 src/slug.ts 里的 slugify(title) 做真正的实现……还没想好中文/非 ASCII 字符怎么处理——是原样保留还是直接删掉，这点需要你问我。顺便加 src/slug.test.ts（node:test），不要加依赖，不要 commit。
+
+Turn 1: the Router called `super_eval` with `constraints` and `ask`. t1 started waiting. No role ran. The delivery was the question:
+
+```text
+t1 needs you: 非 ASCII 字符如何处理？
+slugify 遇到中文等非 ASCII 字符时，应该原样保留还是直接删掉？
+1. 原样保留
+2. 直接删掉
+```
+
+Turn 2: `原样保留` → `super_answer`. Scout, planner, worker, and reviewer each ran once (one hop) and the ticket ended ready. The tree changed only `src/slug.ts` and the new `src/slug.test.ts`. No package.json, no commit. `node --test` gives 5 pass. `slugify("Hello, World!")` returns `"hello-world"`, `slugify("你好 World")` returns `"你好-world"`, and `slugify("  --a--b  ")` returns `"a-b"`.
+
+`scripts/accept.mjs` passed both earlier scenarios again: cents in one hop, pace with one question and `pace(2) === 4`.

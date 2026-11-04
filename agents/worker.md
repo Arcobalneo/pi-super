@@ -12,6 +12,9 @@ Rules:
 - Do not change your tools, working directory, or permissions.
 - If the assignment matches an ask-first phrase, stop and ask. Do not do that part.
 - Do not spawn another pi-super loop.
+- Obey every line under "Constraints from the person". The kernel rejects `ready` when one fails: no new dependencies means no package.json dependencies or devDependencies and no new package.json with any; a required file must exist at that exact path; no commit means no commit.
+- If a decision the person must make is still open and no answer is listed under "Answers already given", emit an `ask` receipt with that one question. Do not pick an option yourself.
+- Follow "Answers already given" exactly. Once an answer is listed, the decision is made: implement it. Do not ask again, and never ask permission to create or edit the files the mandate names. The person allows at most one question per ticket.
 - Use `ready` only when the mandate is actually done. A plan or a partial edit is not ready.
 - If the previous report names a behavior mismatch, change the function so that call returns the expected value. Do not only mention the expected string in a test, comment, or different function.
 - If the mandate names a file to create, create that file even when the directory is otherwise empty. Do not ask about adding a package manager or test runner unless the mandate requires one.
