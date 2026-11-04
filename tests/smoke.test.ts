@@ -80,7 +80,7 @@ describe("extension factory", () => {
 			sendUserMessage() {},
 		};
 		factory(api as unknown as ExtensionAPI);
-		expect(tools.map((tool) => tool.name)).toEqual(["super_eval", "super_answer", "super_dispatch", "super_report", "super_status"]);
+		expect(tools.map((tool) => tool.name)).toEqual(["super_eval", "super_recall", "super_answer", "super_dispatch", "super_report", "super_status"]);
 		expect(commands).toEqual(["super"]);
 		expect(flags).toEqual(["super", "super-plan", "super-off"]);
 		expect([...handlers.keys()]).toEqual(

@@ -32,6 +32,7 @@ export default function piSuper(pi: ExtensionAPI): void {
 		bundledAgentsDir: bundledAgentsDir(),
 		userAgentsDir: join(getAgentDir(), "agents"),
 		userRulesPath: join(getAgentDir(), "super", "rules.json"),
+		sessionRoot: join(getAgentDir(), "super", "sessions"),
 		configDirName: CONFIG_DIR_NAME,
 		readFile: readOptional,
 		findProjectFile: (cwd, parts) => findUp(cwd, parts, "file"),

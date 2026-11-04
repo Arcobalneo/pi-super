@@ -52,7 +52,9 @@ export function selectTickets(
 	request: { mode: "auto" | "explicit"; ids?: string[]; ignoreHopLimit?: boolean },
 ): { tickets: Ticket[]; error?: string } {
 	if (request.mode === "auto") {
-		return { tickets: state.tickets.filter((ticket) => isAutoRunnable(ticket, rules.hopLimit)) };
+		return {
+			tickets: state.tickets.filter((ticket) => isAutoRunnable(ticket, rules.hopLimit) && dependenciesDone(state, ticket)),
+		};
 	}
 	const ids = request.ids ?? [];
 	if (ids.length === 0) return { tickets: [], error: "Name a ticket id." };
@@ -187,4 +189,22 @@ function formatFact(fact: SuperState["facts"][number]): string {
 		default:
 			return "unknown fact";
 	}
+}
+
+/** A ticket with `after` runs only once every ticket it waits for ended completed. */
+export function dependenciesDone(state: SuperState, ticket: Ticket): boolean {
+	return (ticket.after ?? []).every((id) => state.tickets.find((item) => item.id === id)?.outcome === "completed");
+}
+
+/** Dependencies that ended without completing. The waiting ticket cannot run. */
+export function brokenDependencies(state: SuperState, ticket: Ticket): Ticket[] {
+	return (ticket.after ?? [])
+		.map((id) => state.tickets.find((item) => item.id === id))
+		.filter((dep): dep is Ticket =>
+			Boolean(
+				dep &&
+					((dep.status === "ended" && dep.outcome !== "completed") ||
+						(dep.status === "open" && (dep.assignment?.reportKind === "failed" || dep.assignment?.reportKind === "blocked"))),
+			),
+		);
 }

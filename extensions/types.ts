@@ -12,12 +12,12 @@ export type Strength = "explicit" | "inferred";
 
 export type ReportKind = "progress" | "waiting" | "ready" | "blocked" | "failed" | "dropped";
 
-export type DecisionKind = "accept" | "stop" | "ignore";
+export type DecisionKind = "accept" | "attach" | "stop" | "ignore";
 
 /** Live ticket lifecycle. `ended` is a stop or a drop, not a successful delivery. */
 export type Stage = "admit" | "dispatch" | "running" | "ready" | "ask" | "later" | "failed" | "ended";
 
-export type Lane = "code" | "review" | "answer";
+export type Lane = "code" | "task" | "review" | "answer";
 
 export type TellMode = "always" | "needed" | "never";
 
@@ -29,25 +29,27 @@ export interface SuperRules {
 	askFirst: string[];
 }
 
-export interface Constraints {
-	askFirst?: boolean;
-	noNewDeps?: boolean;
-	noCommit?: boolean;
-	files?: string[];
-}
-
-export interface Baseline {
-	head?: string;
-	status: string;
-	deps: string[];
-}
-
 export interface Attention {
 	id: string;
 	title: string;
 	text: string;
 	options: string[];
 	key: string;
+	/** Index into options the asker recommends. */
+	recommend?: number;
+	/** Note for whoever resumes: background and what each option means in practice. */
+	about?: string;
+}
+
+/** Verbatim input that reached a ticket: the person's request, a follow-up, or an answer. */
+export interface TicketInput {
+	kind: "request" | "followup";
+	text: string;
+}
+
+/** A replayable check a receipt claims it ran. */
+export interface ReceiptCheck {
+	run: string;
 }
 
 export interface Assignment {
@@ -75,11 +77,15 @@ export interface Ticket {
 	lane: Lane;
 	hops: number;
 	parentId?: string;
-	constraints?: Constraints;
-	baseline?: Baseline;
+	/** The person's own words. Workers derive requirements from these, not from the Router. */
+	inputs: TicketInput[];
+	/** Router routing note: background only, never requirements. */
+	note?: string;
+	/** Tickets that must end completed before this one runs. */
+	after: string[];
 	assignment?: Assignment;
 	attention?: Attention;
-	answers: { key: string; choice: string }[];
+	answers: { key: string; choice: string; title?: string; about?: string }[];
 	notices: { title: string; text: string }[];
 	later: { key: string; about: string }[];
 	data: TicketData[];
@@ -96,8 +102,9 @@ export interface TicketSeed {
 	hops: number;
 	parentId?: string;
 	data?: TicketData[];
-	constraints?: Constraints;
-	baseline?: Baseline;
+	inputs?: TicketInput[];
+	note?: string;
+	after?: string[];
 }
 
 export interface DecisionRecord {
@@ -117,6 +124,7 @@ export type Fact =
 	| { type: "report.recorded"; ticketId: string; kind: ReportKind; summary: string }
 	| { type: "attention.opened"; ticketId: string; attention: Attention }
 	| { type: "attention.answered"; ticketId: string; choice: string }
+	| { type: "input.added"; ticketId: string; input: TicketInput }
 	| { type: "ticket.ended"; ticketId: string; outcome: string }
 	| { type: "notice.recorded"; ticketId?: string; title: string; text: string }
 	| { type: "later.recorded"; ticketId: string; key: string; about: string }

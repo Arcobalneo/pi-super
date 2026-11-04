@@ -10,7 +10,7 @@ import { interpretOutput, parseReceipt } from "../extensions/receipt.ts";
 import { DEFAULT_RULES, loadRules, policyVersion, readRulesText } from "../extensions/rules.ts";
 import { factsFromEntries, nextId, parseFact, project } from "../extensions/state.ts";
 import { parseBehaviorExamples } from "../extensions/behavior.ts";
-import { acceptanceLiterals, groundedSpeech, missingAcceptanceLiterals, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
+import { groundedSpeech, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
 import { hopLimited, isAutoRunnable, selectTickets, ticketStage, widgetLines } from "../extensions/stage.ts";
 import { buildTask, parseSuperArgs } from "../extensions/task.ts";
 import type { SuperState, Ticket } from "../extensions/types.ts";
@@ -26,6 +26,8 @@ function ticket(partial: Partial<Ticket> = {}): Ticket {
 		status: "open",
 		lane: "code",
 		hops: 0,
+		inputs: [],
+		after: [],
 		answers: [],
 		notices: [],
 		later: [],
@@ -163,6 +165,7 @@ describe("gates and commands", () => {
 			"super_answer",
 			"super_status",
 			"super_report",
+			"super_recall",
 		]);
 		expect(pipelineFor("code", ["scout", "planner", "worker", "reviewer"]).map((step) => step.agent)).toEqual([
 			"scout",
@@ -197,9 +200,6 @@ describe("gates and commands", () => {
 		expect(asked).toContain("1. PR\n2. Patch");
 		expect(asked).toContain("1 other question");
 		expect(asked).not.toContain("production");
-		const scope = 'formatCents(199) === "$1.99" and formatCents(5) === "$0.05"';
-		expect(acceptanceLiterals(scope)).toEqual(["$1.99", "$0.05"]);
-		expect(acceptanceLiterals('options are "keep" and "double"')).toEqual([]);
 		const examples =
 			'Implement formatCents (cents → dollar string, e.g. 199 → "$1.99", 5 → "$0.05", -40 → "-$0.40") and parseCents (inverse, "$1.99" → 199, "$0.05" → 5, "-$0.40" → -40).';
 		expect(parseBehaviorExamples(examples)).toEqual([
@@ -210,7 +210,6 @@ describe("gates and commands", () => {
 			{ fn: "parseCents", args: ["$0.05"], expected: 5 },
 			{ fn: "parseCents", args: ["-$0.40"], expected: -40 },
 		]);
-		expect(missingAcceptanceLiterals(scope, 'assert.equal(formatCents(5), "$0.05");')).toEqual(["$1.99"]);
 	});
 
 	it("resolves the pi command the way the official subagent example does", () => {

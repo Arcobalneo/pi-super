@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig, SubagentResult, UsageStats } from "./types.ts";
@@ -97,6 +97,8 @@ export interface SubagentRequest {
 	trust: "approve" | "no-approve";
 	signal?: AbortSignal;
 	onProgress?: (text: string) => void;
+	/** Continue this role's conversation for the ticket. */
+	session?: { dir: string; id: string };
 }
 
 export async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -123,7 +125,9 @@ export async function runSubagent(request: SubagentRequest, spawnProcess: SpawnF
 		tools: request.agent.tools,
 		trust: request.trust,
 		task: request.task,
+		session: request.session,
 	});
+	if (request.session) await mkdir(request.session.dir, { recursive: true });
 	let tmpDir: string | undefined;
 	if (request.agent.systemPrompt.trim()) {
 		tmpDir = await mkdtemp(join(tmpdir(), "pi-super-"));

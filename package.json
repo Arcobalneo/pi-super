@@ -1,6 +1,6 @@
 {
   "name": "pi-super",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Pi package that turns the main session into a Super-agent Router. The person talks only to that session; workers, events, and the loop stay underneath.",
   "type": "module",
   "license": "MIT",

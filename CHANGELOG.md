@@ -7,6 +7,31 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.3.0] - unreleased
+
+A general redesign after studying the DeepSeek Harness post and three reference implementations (dsh-superagent-prototype, agent-autoloop, dsh-session-superagent). v0.2.1 fixed one scenario with special-case rules; v0.3 replaces them with structure.
+
+### Changed
+
+- The person's words are the mandate. Each ticket keeps the original request and every follow-up verbatim, and workers derive requirements from them. The Router no longer writes a `scope`; it may add a 30-word routing `note` that is marked as not a requirement.
+- `ready` is grounded generically. A deliverable receipt must list `checks` (commands) and `changed` (files). The kernel reruns each check and confirms each file exists and changed. A failed check sends the ticket back.
+- Each ticket has one persistent session per role (`--session-dir/--session-id`). Resumed rounds continue the same conversation instead of starting cold.
+- Receipts keep the whole summary. Prose fallback takes the last full paragraph, `json`-labelled blocks are accepted, and a missing receipt gets one repair turn in the same session without redoing the work.
+- Agent prompts are domain-neutral: coding, refactoring, writing, and research tasks follow the same contract.
+
+### Added
+
+- Routing decisions `attach` (follow-up to an existing ticket, reopening it) and `stop`, beside `accept` and `ignore`.
+- `after` dependencies between tickets. A ticket whose dependency failed is reported `blocked`.
+- A `task` lane for non-code deliverables.
+- Asks carry `recommend` and `about`. A key already decided by the person is fed back instead of asked again.
+- `super_recall` reads an earlier ticket in full (chain of recall).
+- An intake question is returned as the Router's reply text and is not delivered a second time.
+
+### Removed
+
+- The `constraints` parameter and the phrase-matching constraint checker. Constraints are read from the verbatim request by the worker and reviewer, and proven through checks.
+
 ## [0.2.1] - 2026-11-04
 
 A real k2.8 run of the slugify scenario showed four gaps. The person said "ask me" and was never asked; the worker added devDependencies and moved the test; the reviewer said ready; and the Router said a question was sent after the tool refused it. This release closes them.

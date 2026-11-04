@@ -1,6 +1,5 @@
 import type {
-	Baseline,
-	Constraints,
+	TicketInput,
 	Attention,
 	DecisionKind,
 	Fact,
@@ -14,7 +13,7 @@ import type {
 
 const REPORTS = new Set<ReportKind>(["progress", "waiting", "ready", "blocked", "failed", "dropped"]);
 const STRENGTHS = new Set<Strength>(["explicit", "inferred"]);
-const DECISIONS = new Set<DecisionKind>(["accept", "stop", "ignore"]);
+const DECISIONS = new Set<DecisionKind>(["accept", "attach", "stop", "ignore"]);
 
 export function emptyState(): SuperState {
 	return {
@@ -88,11 +87,24 @@ export function reduce(state: SuperState, fact: Fact): SuperState {
 			const ticket = findTicket(next, fact.ticketId);
 			if (!ticket) break;
 			const key = ticket.attention?.key ?? "answer";
-			ticket.answers.push({ key, choice: fact.choice });
+			ticket.answers = ticket.answers.filter((item) => item.key !== key);
+			ticket.answers.push({ key, choice: fact.choice, title: ticket.attention?.title, about: ticket.attention?.about });
 			ticket.attention = undefined;
 			if (ticket.status === "open" && ticket.assignment?.reportKind === "blocked") {
 				ticket.assignment.reportKind = "progress";
 			}
+			break;
+		}
+		case "input.added": {
+			const ticket = findTicket(next, fact.ticketId);
+			if (!ticket || ticket.outcome === "stopped") break;
+			ticket.inputs.push(fact.input);
+			if (ticket.status === "ended") {
+				ticket.status = "open";
+				ticket.outcome = undefined;
+				ticket.hops = 0;
+			}
+			if (ticket.assignment) ticket.assignment.reportKind = "progress";
 			break;
 		}
 		case "ticket.ended": {
@@ -205,6 +217,10 @@ export function parseFact(value: unknown): Fact | undefined {
 			return isString(record.ticketId) && isString(record.choice)
 				? { type: "attention.answered", ticketId: record.ticketId, choice: record.choice }
 				: undefined;
+		case "input.added": {
+			const input = parseInput(record.input);
+			return isString(record.ticketId) && input ? { type: "input.added", ticketId: record.ticketId, input } : undefined;
+		}
 		case "ticket.ended":
 			return isString(record.ticketId) && isString(record.outcome)
 				? { type: "ticket.ended", ticketId: record.ticketId, outcome: record.outcome }
@@ -265,8 +281,9 @@ function seedTicket(seed: TicketSeed): Ticket {
 		lane: seed.lane ?? "code",
 		hops: seed.hops,
 		parentId: seed.parentId,
-		constraints: seed.constraints,
-		baseline: seed.baseline,
+		inputs: [...(seed.inputs ?? [])],
+		note: seed.note,
+		after: [...(seed.after ?? [])],
 		answers: [],
 		notices: [],
 		later: [],
@@ -314,8 +331,9 @@ function parseTicketSeed(value: unknown): TicketSeed | undefined {
 		hops: record.hops,
 		parentId: isString(record.parentId) ? record.parentId : undefined,
 		data,
-		constraints: parseConstraints(record.constraints),
-		baseline: parseBaseline(record.baseline),
+		inputs: parseInputs(record.inputs),
+		note: isString(record.note) ? record.note : undefined,
+		after: stringList(record.after) ?? [],
 	};
 }
 
@@ -326,7 +344,15 @@ function parseAttention(value: unknown): Attention | undefined {
 	if (!isString(record.id) || !isString(record.title) || !isString(record.text) || !isString(record.key) || !options) {
 		return undefined;
 	}
-	return { id: record.id, title: record.title, text: record.text, key: record.key, options };
+	return {
+		id: record.id,
+		title: record.title,
+		text: record.text,
+		key: record.key,
+		options,
+		...(isInt(record.recommend) ? { recommend: record.recommend } : {}),
+		...(isString(record.about) ? { about: record.about } : {}),
+	};
 }
 
 function parseData(value: unknown): { id: string; summary: string }[] | undefined {
@@ -369,24 +395,17 @@ function isDecision(value: unknown): value is DecisionKind {
 }
 
 function isLane(value: unknown): value is Lane {
-	return value === "code" || value === "review" || value === "answer";
+	return value === "code" || value === "task" || value === "review" || value === "answer";
 }
 
-function parseConstraints(value: unknown): Constraints | undefined {
+function parseInput(value: unknown): TicketInput | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const r = value as Record<string, unknown>;
-	const files = stringList(r.files);
-	return {
-		askFirst: r.askFirst === true || undefined,
-		noNewDeps: r.noNewDeps === true || undefined,
-		noCommit: r.noCommit === true || undefined,
-		files: files && files.length > 0 ? files : undefined,
-	};
+	if ((r.kind !== "request" && r.kind !== "followup") || !isString(r.text)) return undefined;
+	return { kind: r.kind, text: r.text };
 }
 
-function parseBaseline(value: unknown): Baseline | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const r = value as Record<string, unknown>;
-	if (!isString(r.status)) return undefined;
-	return { head: isString(r.head) ? r.head : undefined, status: r.status, deps: stringList(r.deps) ?? [] };
+function parseInputs(value: unknown): TicketInput[] {
+	if (!Array.isArray(value)) return [];
+	return value.map(parseInput).filter((item): item is TicketInput => Boolean(item));
 }
