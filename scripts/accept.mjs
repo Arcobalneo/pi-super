@@ -28,7 +28,7 @@ const agentDir = join(base, "agent");
 rmSync(base, { recursive: true, force: true });
 mkdirSync(agentDir, { recursive: true });
 
-const SCENARIOS = { ask, refactor, writing, split, blocked };
+const SCENARIOS = { ask, refactor, writing, split, blocked, timeout, restart };
 const only = process.env.ACCEPT_ONLY?.split(",").map((name) => name.trim()).filter(Boolean);
 const names = only?.length ? only : Object.keys(SCENARIOS);
 const results = await Promise.all(names.map(async (name) => [name, await SCENARIOS[name]()]));
@@ -156,6 +156,46 @@ async function blocked() {
 	return s.done(checks, { kinds, lane });
 }
 
+async function timeout() {
+	// A 15-second step deadline on a task that takes longer: the kernel must stop the run, retry once, and then
+	// either finish or say plainly how to run it again. It must never hang.
+	const s = scenario("timeout", {
+		"package.json": '{"name":"t","type":"module","scripts":{"test":"node --test"}}\n',
+		".pi/super/rules.json": '{"stepTimeoutMinutes":0.25}\n',
+	});
+	const started = Date.now();
+	const out = await s.turn("写 src/roman.js：导出 toRoman(n) 和 fromRoman(s)，支持 1..3999，非法输入抛 RangeError；配 src/roman.test.js（node:test），覆盖 1、4、9、14、40、90、400、1994、3999 的双向转换和非法输入。");
+	const facts = s.facts();
+	const retried = facts.some((fact) => fact.type === "notice.recorded" && fact.title === "Retried" && /timed out/.test(fact.text));
+	const outcome = lastReport(facts, "t1") === "ready" ? "completed" : undefined;
+	const last = facts.filter((fact) => fact.type === "report.recorded").at(-1);
+	const checks = {
+		retried,
+		settled: outcome === "completed" || (last?.kind === "failed" && /\/super run/.test(last.summary)) || last?.kind === "progress",
+		bounded: Date.now() - started < 20 * 60_000,
+		honest: outcome !== "completed" || run(s.repo, "npm", ["test"]) === 0,
+	};
+	return s.done(checks, { outcome, last: last?.kind, speech: out.speech.slice(-300) });
+}
+
+async function restart() {
+	// Kill pi (and its workers) mid-run, then start it again on the same session: the interrupted assignment must be
+	// recovered from the ledger and the ticket must finish.
+	const s = scenario("restart", { "package.json": '{"name":"r","type":"module","scripts":{"test":"node --test"}}\n' });
+	await s.turn("写 src/wordcount.js：导出 wordCount(text) 返回 {词: 次数}，忽略大小写和标点；配 src/wordcount.test.js（node:test）覆盖空串、标点、大小写。不要加依赖。", { killAfterMs: 45_000 });
+	const interrupted = s.facts().some((fact) => fact.type === "assignment.started");
+	await s.turn("继续");
+	const facts = s.facts();
+	const checks = {
+		interrupted,
+		recovered: facts.some((fact) => fact.type === "notice.recorded" && fact.title === "Recovered"),
+		completed: lastReport(facts, "t1") === "ready",
+		oneTicket: facts.filter((fact) => fact.type === "ticket.created").length === 1,
+		testsPass: run(s.repo, "npm", ["test"]) === 0,
+	};
+	return s.done(checks);
+}
+
 // --- harness -------------------------------------------------------------
 
 function scenario(name, files) {
@@ -174,9 +214,9 @@ function scenario(name, files) {
 	return {
 		repo,
 		facts,
-		async turn(prompt) {
+		async turn(prompt, options = {}) {
 			const before = facts().length;
-			const out = await runPi(repo, sessionDir, name, prompt, turns.length);
+			const out = await runPi(repo, sessionDir, name, prompt, turns.length, options.killAfterMs);
 			const turn = { ...out, facts: facts().slice(before) };
 			turns.push(turn);
 			return turn;
@@ -187,22 +227,25 @@ function scenario(name, files) {
 	};
 }
 
-async function runPi(repo, sessionDir, name, prompt, index) {
+async function runPi(repo, sessionDir, name, prompt, index, killAfterMs) {
 	const logPath = join(base, `${name}-${index + 1}.log`);
 	const args = ["--no-extensions", "-e", join(root, "extensions", "index.ts"), "--skill", join(root, "skills", "pi-super"), "--prompt-template", join(root, "prompts"),
 		"--model", "kimi-coding/kimi-for-coding", "--thinking", "low", "--approve", "--mode", "json",
 		"--session-dir", sessionDir, "--session-id", "main", "-p", "--", prompt];
-	const child = spawn(pi, args, { cwd: repo, env: { ...process.env, KIMI_API_KEY: key, PI_CODING_AGENT_DIR: agentDir }, stdio: ["ignore", "pipe", "pipe"] });
+	const child = spawn(pi, args, { cwd: repo, env: { ...process.env, KIMI_API_KEY: key, PI_CODING_AGENT_DIR: agentDir }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+	// Simulate a crash: kill the whole process group, workers included.
+	const crash = killAfterMs ? setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, killAfterMs) : undefined;
 	let stdout = "";
 	let stderr = "";
 	child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
 	child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
-	const timer = setTimeout(() => child.kill("SIGTERM"), 1_500_000);
+	const timer = setTimeout(() => { try { process.kill(-child.pid, "SIGTERM"); } catch {} }, 1_500_000);
 	const exitCode = await new Promise((resolve) => {
 		child.on("close", (code) => resolve(code ?? 1));
 		child.on("error", () => resolve(1));
 	});
 	clearTimeout(timer);
+	if (crash) clearTimeout(crash);
 	const output = redact(`${stdout}\n${stderr}`);
 	if (output.includes(key)) throw new Error("redaction failed");
 	writeFileSync(logPath, output);

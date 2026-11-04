@@ -75,12 +75,15 @@ Router 工具：`super_eval`、`super_answer`、`super_report`、`super_status`�
 ```json
 {
   "hopLimit": 8,
+  "stepTimeoutMinutes": 30,
   "parallel": 4,
   "tell": "needed",
   "acceptInferred": true,
   "askFirst": ["rm -rf", "git push --force", "git push -f", "git reset --hard", "drop table", "delete data", "spend money", "external message"]
 }
 ```
+
+`stepTimeoutMinutes` 是每个角色每轮的截止时间（0.25–240）。超时或崩溃会在同一 session 里重派一次。
 
 一轮流水线只计 1 跳。提问和 later 不清零。`/super run <id>` 可以越过这一次上限。
 
@@ -112,8 +115,20 @@ pi-super 的架构直接参考以下原帖和三个仓库。这里写明每一�
 | grounded ready：必须给 `checks` 和 `changed`，kernel 重跑；拒绝不可能失败的检查 | session-superagent `docs/kb/acceptance-criteria.md`（完成标准可观测）、`gate-mutation-check.md`、`found-problem-but-exit-zero.md`，以及"交付 ≠ 行动" |
 | 入口问题只出现一次，Router 不自写追问 | 原帖"不复述"；prototype 由 worker 提出 human_action、Router 原样转达 |
 | `after` 依赖、`super_recall` 回看历史 ticket | 原帖 Chain of Recall；prototype ticket 关联 |
+| 崩溃、非零退出或超时的一轮，在同一 session 里自动重派一次；第二次仍失败则报 failed，并提示 `/super run <id>` | autoloop `kernel/decide.ts` `retryLater`；prototype `src/core/tickets.ts` `retry` / `src/core/stage.ts` `canRetry` |
+| 每个角色每轮有截止时间 `stepTimeoutMinutes`（默认 30） | autoloop `worker/worker.ts` `TIMEOUT_MINUTES` |
+| 没跑成的一轮只能留通知，丢弃 ask 和 events | autoloop `kernel/decide.ts` `retryLater`（"没跑成的一轮只能发通知"） |
+| 回执最多重写两次 | autoloop `docs/protocol.md`（"最多两次"） |
+| 只追加的事实账本，重启后重放；进程死掉时还标着 running 的 assignment 会被收回、重跑 | autoloop `docs/protocol.md`"结构与预算"、`kernel/decide.ts` `RUN_LEASE` |
+| `/super status` 显示每个 ticket 的运行次数、tokens、花费；等人的 ticket 显示原因 | autoloop `docs/protocol.md` `usage`；session-superagent `docs/kb/status-text-shows-exceptions.md` |
 
-没有采用的部分：多通道接入、云端隔离、Watchdog、全双工语音。这些属于部署层，不在 pi 扩展的范围内。
+没有采用的部分：
+- 多通道接入、云端隔离、全双工语音：属于部署层，不在 pi 扩展的范围内。
+- 独立 Watchdog 进程、心跳租约：pi 是单进程会话，用每步截止时间加重启后收回代替。
+- 指数退避重试：交互式会话里人在等，只立即重派一次。
+- 上下文压缩：由 pi 宿主的 session 机制负责。
+- 按 thread 把追问分给 worker（prototype `workerDecides`）：pi 只有一条主线程。
+- Router 是否 stop、是否保持 blocked：参考仓库同样只要求明确的人工指令，这属于模型判断。
 
 ## 开发 / Develop
 

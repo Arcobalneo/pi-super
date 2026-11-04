@@ -62,6 +62,10 @@ export function reduce(state: SuperState, fact: Fact): SuperState {
 		case "assignment.ended": {
 			const ticket = findTicket(next, fact.ticketId);
 			if (ticket?.assignment?.id === fact.assignmentId) ticket.assignment.status = "ended";
+			if (ticket && (fact.tokens || fact.cost)) {
+				const before = ticket.spent ?? { runs: 0, tokens: 0, cost: 0 };
+				ticket.spent = { runs: before.runs + 1, tokens: before.tokens + (fact.tokens ?? 0), cost: before.cost + (fact.cost ?? 0) };
+			}
 			break;
 		}
 		case "report.recorded": {
@@ -201,7 +205,13 @@ export function parseFact(value: unknown): Fact | undefined {
 				: undefined;
 		case "assignment.ended":
 			return isString(record.ticketId) && isString(record.assignmentId)
-				? { type: "assignment.ended", ticketId: record.ticketId, assignmentId: record.assignmentId }
+				? {
+						type: "assignment.ended",
+						ticketId: record.ticketId,
+						assignmentId: record.assignmentId,
+						...(typeof record.tokens === "number" ? { tokens: record.tokens } : {}),
+						...(typeof record.cost === "number" ? { cost: record.cost } : {}),
+					}
 				: undefined;
 		case "report.recorded":
 			return isString(record.ticketId) && isReport(record.kind) && isString(record.summary)

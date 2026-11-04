@@ -23,6 +23,8 @@ export type TellMode = "always" | "needed" | "never";
 
 export interface SuperRules {
 	hopLimit: number;
+	/** Minutes one role run may take before the kernel stops it and retries once. */
+	stepTimeoutMinutes: number;
 	parallel: number;
 	tell: TellMode;
 	acceptInferred: boolean;
@@ -67,6 +69,8 @@ export interface TicketData {
 
 export interface Ticket {
 	id: string;
+	/** Runs, tokens, and dollars spent on this ticket, summed from assignment.ended facts. */
+	spent?: { runs: number; tokens: number; cost: number };
 	title: string;
 	scope: string;
 	strength: Strength;
@@ -120,7 +124,7 @@ export type Fact =
 	| { type: "loop.continued" }
 	| { type: "ticket.created"; ticket: TicketSeed }
 	| { type: "assignment.started"; ticketId: string; assignmentId: string; agent: string; hops: number }
-	| { type: "assignment.ended"; ticketId: string; assignmentId: string }
+	| { type: "assignment.ended"; ticketId: string; assignmentId: string; tokens?: number; cost?: number }
 	| { type: "report.recorded"; ticketId: string; kind: ReportKind; summary: string }
 	| { type: "attention.opened"; ticketId: string; attention: Attention }
 	| { type: "attention.answered"; ticketId: string; choice: string }

@@ -296,3 +296,67 @@ describe("checks that cannot fail", () => {
 		expect(await verifyReady({ cwd: dir, lane: "code", checks: ["grep -q x a.txt"], changed: ["a.txt"], request: "" })).toEqual([]);
 	});
 });
+
+describe("runs that do not get through", () => {
+	const crash = (): SubagentResult => ({ ...res("partial output"), exitCode: 1, errorMessage: "provider 502" });
+
+	it("re-dispatches a crashed run once in the same session", async () => {
+		const dir = repo();
+		const { runtime, tasks, sessions } = setup((_task, call) => {
+			if (call === 1) return crash();
+			writeFileSync(join(dir, "a.txt"), "ok\n");
+			return receipt({ report: "ready", summary: "done", checks: ["grep -q ok a.txt"], changed: ["a.txt"] });
+		});
+		runtime.noteUserPrompt("Write ok into a.txt.");
+		runtime.evalDecision({ title: "A", strength: "explicit", decision: "accept", reason: "r" });
+		await drain(runtime, dir);
+		expect(tasks[1]).toContain("stopped before it finished (exited 1: provider 502)");
+		expect(sessions).toEqual(["t1-worker", "t1-worker"]);
+		expect(runtime.state.tickets[0]?.outcome).toBe("completed");
+	});
+
+	it("gives up after the second crash and tells the person how to run it again", async () => {
+		const dir = repo();
+		const { runtime, tasks } = setup(() => crash());
+		runtime.noteUserPrompt("Write ok into a.txt.");
+		runtime.evalDecision({ title: "A", strength: "explicit", decision: "accept", reason: "r" });
+		const out = await drain(runtime, dir);
+		expect(tasks).toHaveLength(2);
+		expect(runtime.state.tickets[0]?.assignment?.reportKind).toBe("failed");
+		expect(out.speech).toContain("/super run t1");
+	});
+
+	it("does not retry an honest failed receipt", async () => {
+		const dir = repo();
+		const { runtime, tasks } = setup(() => receipt({ report: "failed", summary: "the API does not exist" }));
+		runtime.noteUserPrompt("Call the API.");
+		runtime.evalDecision({ title: "A", strength: "explicit", decision: "accept", reason: "r" });
+		await drain(runtime, dir);
+		expect(tasks).toHaveLength(1);
+	});
+});
+
+describe("restart and status", () => {
+	it("recovers an assignment left running by a dead process, and shows spend and reasons", () => {
+		const { runtime } = setup(() => res(""));
+		const entries = [
+			{ type: "custom", customType: "pi-super", data: { type: "ticket.created", ticket: { id: "t1", title: "A", scope: "", strength: "explicit", policyVersion: "x", askFirst: [], lane: "code", hops: 0, inputs: [{ kind: "request", text: "do A" }] } } },
+			{ type: "custom", customType: "pi-super", data: { type: "assignment.started", ticketId: "t1", assignmentId: "a1", agent: "worker", hops: 1 } },
+		];
+		runtime.beginSession(entries, "/tmp");
+		expect(runtime.state.tickets[0]?.assignment?.status).toBe("ended");
+		expect(runtime.why("t1")).toMatch(/interrupted by a restart/);
+		runtime.beginSession(
+			[
+				entries[0],
+				{ type: "custom", customType: "pi-super", data: { type: "assignment.started", ticketId: "t1", assignmentId: "a2", agent: "worker", hops: 2 } },
+				{ type: "custom", customType: "pi-super", data: { type: "assignment.ended", ticketId: "t1", assignmentId: "a2", tokens: 1200, cost: 0.01 } },
+				{ type: "custom", customType: "pi-super", data: { type: "report.recorded", ticketId: "t1", kind: "blocked", summary: "data file missing" } },
+			],
+			"/tmp",
+		);
+		const status = runtime.statusText();
+		expect(status).toContain("1 runs 1200 tok $0.0100");
+		expect(status).toContain("blocked: data file missing");
+	});
+});

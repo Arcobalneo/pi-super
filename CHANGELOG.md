@@ -31,6 +31,12 @@ A general redesign after studying the DeepSeek Harness post and three reference 
 - Checks that cannot fail (`true`, `echo …`, `… || true`) are rejected.
 - `scripts/accept.mjs` runs the five v0.3 scenarios with machine checks.
 - README section citing the design references.
+- A run that crashes, exits non-zero without a receipt, or passes `stepTimeoutMinutes` (default 30) is re-dispatched once in the same session. A second failure reports `failed` and names `/super run <id>`.
+- After a restart, an assignment the ledger still shows as running is recovered, and the ticket runs again.
+- A `failed` receipt keeps only its notice: any ask and events are dropped.
+- Receipts can be rewritten up to twice.
+- `/super status` shows runs, tokens, and cost per ticket, and why a waiting ticket waits.
+- Acceptance scenarios `timeout` and `restart`.
 
 ### Removed
 

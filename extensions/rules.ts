@@ -3,6 +3,7 @@ import type { SuperRules, TellMode } from "./types.ts";
 
 export const DEFAULT_RULES: SuperRules = {
 	hopLimit: 8,
+	stepTimeoutMinutes: 30,
 	parallel: 4,
 	tell: "needed",
 	acceptInferred: true,
@@ -45,6 +46,13 @@ export function overlayRules(base: SuperRules, input: unknown): { rules: SuperRu
 			return { rules: base, error: "hopLimit must be an integer from 1 to 32" };
 		}
 		next.hopLimit = value;
+	}
+	if ("stepTimeoutMinutes" in record) {
+		const value = record.stepTimeoutMinutes;
+		if (typeof value !== "number" || !Number.isFinite(value) || value < 0.25 || value > 240) {
+			return { rules: base, error: "stepTimeoutMinutes must be a number from 0.25 to 240" };
+		}
+		next.stepTimeoutMinutes = value;
 	}
 	if ("parallel" in record) {
 		const value = record.parallel;

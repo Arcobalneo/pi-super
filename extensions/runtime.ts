@@ -128,6 +128,21 @@ export class SuperRuntime {
 		this.openedQuestionThisRun = false;
 		this.state = project(factsFromEntries(entries));
 		this.reloadRules(cwd);
+		this.recoverInterrupted();
+	}
+
+	/**
+	 * The ledger is the source of truth and replays after a restart (agent-autoloop docs/protocol.md: 只追加的事实日志).
+	 * An assignment still marked running belonged to a process that is gone; end it so the ticket can run again in its
+	 * kept session (agent-autoloop kernel/decide.ts RUN_LEASE; prototype src/core/tickets.ts retry).
+	 */
+	private recoverInterrupted(): void {
+		for (const ticket of this.state.tickets) {
+			const assignment = ticket.assignment;
+			if (ticket.status !== "open" || assignment?.status !== "running") continue;
+			this.apply({ type: "notice.recorded", ticketId: ticket.id, title: "Recovered", text: `${assignment.agent} was interrupted by a restart; the ticket runs again.` });
+			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId: assignment.id });
+		}
 	}
 
 	endSession(): void {
@@ -704,33 +719,64 @@ export class SuperRuntime {
 		const session = this.deps.sessionRoot
 			? { dir: join(this.deps.sessionRoot, slug(request.cwd).slice(0, 40) || "cwd", ticket.id), id: `${ticket.id}-${agent.name}` }
 			: undefined;
-		const call = (text: string) =>
-			this.deps.runAgent({
+		// Each role run has a deadline (agent-autoloop worker/worker.ts TIMEOUT_MINUTES).
+		let timeout = new AbortController();
+		const call = (text: string) => {
+			timeout = new AbortController();
+			const timer = setTimeout(() => timeout.abort(), this.rules.stepTimeoutMinutes * 60_000);
+			return this.deps.runAgent({
 				agent,
 				task: text,
 				cwd: request.cwd,
 				model: request.model,
 				thinkingLevel: request.thinkingLevel,
 				trust: request.projectTrusted ? "approve" : "no-approve",
-				signal: this.combinedSignal(request.signal),
+				signal: AbortSignal.any([this.combinedSignal(request.signal), timeout.signal]),
 				onProgress: (line) => request.onProgress?.(`${ticket.id} ${agent.name}: ${line}`),
 				...(session ? { session } : {}),
-			});
-		let result: SubagentResult;
-		try {
-			result = await call(task);
-		} catch (error) {
-			const summary = error instanceof Error ? error.message : String(error);
+			}).finally(() => clearTimeout(timer));
+		};
+		const stoppedByPerson = () => this.abort.signal.aborted || Boolean(request.signal?.aborted);
+		// A run that crashed, timed out, or exited non-zero did not get through. It is re-dispatched once in the
+		// same session (agent-autoloop kernel/decide.ts retryLater; prototype src/core/tickets.ts retry).
+		const attempt = async (text: string): Promise<{ result?: SubagentResult; crash?: string }> => {
+			try {
+				const result = await call(text);
+				if (stoppedByPerson()) return { result };
+				if (timeout.signal.aborted) return { result, crash: `timed out after ${this.rules.stepTimeoutMinutes} minutes` };
+				if (result.exitCode !== 0 && !hasReceipt(result.text)) {
+					return { result, crash: `exited ${result.exitCode}${result.errorMessage ? `: ${result.errorMessage}` : ""}` };
+				}
+				return { result };
+			} catch (error) {
+				return { crash: error instanceof Error ? error.message : String(error) };
+			}
+		};
+		let first = await attempt(task);
+		if (first.crash) {
+			this.apply({ type: "notice.recorded", ticketId: ticket.id, title: "Retried", text: `${agent.name} ${first.crash}; retrying once.` });
+			const usage = first.result?.usage;
+			first = await attempt(`Your previous run of this step stopped before it finished (${first.crash}). Continue the same step from where you were.\n\n${task}`);
+			if (first.result && usage) first.result = { ...first.result, usage: addUsage(usage, first.result.usage) };
+		}
+		if (first.crash || !first.result) {
+			const summary = `${agent.name} did not finish twice: ${first.crash ?? "no result"}. Run /super run ${ticket.id} to try again, or stop it.`;
 			this.applyInterpreted(ticket.id, { report: "failed", summary, events: [] });
 			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId });
-			return piece(ticket.id, `${ticket.id} failed: ${summary}`, false, true, emptyUsage(), "");
+			return { ...piece(ticket.id, `${ticket.id} failed: ${summary}`, false, true, first.result?.usage ?? emptyUsage(), ""), evidence: summary, kind: "failed" };
 		}
+		let result: SubagentResult = first.result;
 		let interpreted: Interpreted = result.aborted
 			? { report: "failed" as const, summary: "aborted", events: [] }
 			: interpretOutput(result.text, result.exitCode, result.stderr || result.errorMessage || "");
+		// A run that did not get through may only leave a notice (agent-autoloop kernel/decide.ts retryLater: 没跑成的一轮只能发通知).
+		if (interpreted.report === "failed" && (interpreted.ask || interpreted.events.length > 0)) {
+			interpreted = { ...interpreted, ask: undefined, events: [] };
+		}
 		const final = override?.interpret !== "gate";
-		// A final step owes a receipt. Ask the same session to rewrite only its last message, once.
-		if (final && !result.aborted && result.exitCode === 0 && (interpreted.receiptMissing || interpreted.receiptError)) {
+		// A final step owes a receipt. Ask the same session to rewrite only its last message, at most twice
+		// (agent-autoloop docs/protocol.md: 回执写错不重做业务, 最多两次).
+		for (let repair = 0; repair < 2 && final && !result.aborted && result.exitCode === 0 && (interpreted.receiptMissing || interpreted.receiptError); repair++) {
 			try {
 				const fixed = await call(repairReceiptPrompt(interpreted.receiptError ?? "no pi-super block was found"));
 				const again = interpretOutput(fixed.text, fixed.exitCode, fixed.stderr || fixed.errorMessage || "");
@@ -774,7 +820,7 @@ export class SuperRuntime {
 		}
 		const hard = Boolean(interpreted.ask) || interpreted.report === "failed" || interpreted.report === "blocked";
 		if (override?.interpret === "gate" && !hard) {
-			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId });
+			this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId, ...spent(result.usage) });
 			return {
 				...piece(ticket.id, `${ticket.id} ${agent.name} step done`, false, false, result.usage, result.text),
 				rawText: result.text,
@@ -783,7 +829,7 @@ export class SuperRuntime {
 			};
 		}
 		this.applyInterpreted(ticket.id, interpreted);
-		this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId });
+		this.apply({ type: "assignment.ended", ticketId: ticket.id, assignmentId, ...spent(result.usage) });
 		const failed = interpreted.report === "failed";
 		const line = formatLine(ticket.id, interpreted);
 		const made = piece(ticket.id, line, Boolean(interpreted.ask), failed, result.usage, result.text);
@@ -1029,4 +1075,13 @@ export function repairReceiptPrompt(problem: string): string {
 		"Do not redo any work and do not call tools.",
 		"Rewrite only your last message: one plain paragraph that says what was done, then one ```pi-super fenced JSON receipt.",
 	].join(" ");
+}
+
+function hasReceipt(text: string): boolean {
+	return /```(pi-super|json)/.test(text) || /\{\s*"report"\s*:/.test(text);
+}
+
+/** What a run cost, kept on the ledger so status can show it (agent-autoloop docs/protocol.md usage; status-cost). */
+function spent(usage: UsageStats): { tokens: number; cost: number } {
+	return { tokens: usage.input + usage.output, cost: Math.round(usage.cost * 10_000) / 10_000 };
 }
