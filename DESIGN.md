@@ -20,7 +20,7 @@ Studied at:
 | Article §2.1 Router only interacts, admits, assigns, and summarizes. | `super_eval` admits. The kernel, not the model, runs the lane. A delivery turn is one `[pi-super delivery]` message: summarize or ask, do not call tools. |
 | Article §2.2 Workers report upward. No direct human channel. | scout / planner / worker / reviewer are subprocesses (`--mode json --print --no-session --no-extensions`). Their prose is not shown to the person. The Router speaks the receipt summary. |
 | Article §3 triggers, fast path, subscription. | The person's message is the only trigger Pi can see. There is no GitHub or Feishu source. Follow-up on an open question is `super_answer`, which resumes that ticket without a new admit. Child `events` in a receipt become inferred tickets when `acceptInferred` is on. |
-| Article §4 one question, speak only when a person must act or can use a result. Stay short. | `deliverySpeech` includes at most one question. `tell: needed` wakes the main model for `ready`, `failed`, or `ask`, and for a spent hop fuse. `progress` does not. The widget shows the oldest question and failures. A healthy run adds no widget rows. |
+| Article §4 one question, speak only when a person must act or can use a result. Honest reporting. | `groundedSpeech` copies the receipt summary, or the one ask title, text, and options. It does not send that text back through the model, so the summary cannot add a check the receipt did not name. `progress` is not shown. The widget shows the oldest question and failures. |
 | Article §4 full-duplex `start()` so the Router is not blocked. | Not available. Pi tool calls and `agent_before_settle` run in the session process. The loop drains workers before the turn settles, then wakes the Router once. Documented below. |
 | dsh philosophy, docs/000. Act only when asked. One concrete question. Honest reporting. | `super_eval` accept / stop / ignore. `ask` blocks. `ready` means the mandate is done. `failed` stays failed. Ask-first phrases stop before any role runs. |
 | dsh docs/001–003. Mandate, assignment, report, stages. | Facts in the session log. Stages: admit, dispatch, running, ready, ask, later, failed, ended. `ready` is the completed outcome. Stop and drop are `ended`. An answer to a blocked ticket returns it to dispatch and does not reset hops. |
@@ -41,8 +41,9 @@ Studied at:
 2. If the Router records nothing, `agent_before_settle` injects one nudge: answer the open question, admit the work, or ignore it.
 3. `super_eval` accept writes a ticket and returns. The model is told to stop.
 4. On settle, the kernel drains runnable tickets up to the hop limit and `MAX_DRAIN_STEPS`. A `code` ticket runs the four roles in order. A role that asks or fails stops the round. The round counts as one hop.
-5. The kernel wakes the Router only with a delivery: results, one question, or a hop-limit note.
-6. The person answers in prose (`super_answer`) or with `/super answer`. The next settle resumes that ticket.
+5. The kernel shows one delivery built only from the receipt: the summary, or one question's title, text, and options. The model does not paraphrase it.
+6. A reviewer `progress` report sends the ticket back to the worker and then the reviewer. `ready` is not recorded for that round.
+7. The person answers in prose (`super_answer`) or with `/super answer`. The next settle resumes that ticket.
 
 ## 没有照搬的部分 / Not adopted
 

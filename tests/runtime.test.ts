@@ -75,7 +75,10 @@ describe("runtime", () => {
 		runtime.armLoop();
 		runtime.evalDecision({ title: "Ship", scope: "Ship it", strength: "explicit", decision: "accept", reason: "user asked" });
 		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
-		expect(drained.needsModel).toBe(true);
+		expect(drained.needsModel).toBe(false);
+		expect(drained.speech).toContain("How?");
+		expect(drained.speech).toContain("1. PR\n2. Patch");
+		expect(drained.speech).not.toContain("Ship it");
 		expect(runtime.state.tickets[0]?.attention?.title).toBe("Ship?");
 		const again = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
 		expect(again.dispatched).toBe(0);
@@ -163,7 +166,7 @@ describe("runtime", () => {
 		let calls = 0;
 		const { runtime, agents } = setup((task) => {
 			calls += 1;
-			if (task.includes("Review the result")) {
+			if (task.includes("acceptance criterion")) {
 				return result("Looks good.\n```pi-super\n{\"report\":\"ready\",\"summary\":\"Greeting updated.\"}\n```");
 			}
 			return result(`step ${calls} notes`);
@@ -175,9 +178,9 @@ describe("runtime", () => {
 		expect(calls).toBe(4);
 		expect(runtime.state.tickets[0]?.hops).toBe(1);
 		expect(runtime.state.tickets[0]?.status).toBe("ended");
-		expect(drained.needsModel).toBe(true);
+		expect(drained.needsModel).toBe(false);
 		expect(drained.speech).toContain("Greeting updated.");
-		expect(drained.speech).toContain("Do not call tools");
+		expect(drained.speech).not.toContain("Do not call tools");
 		const again = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
 		expect(again.dispatched).toBe(0);
 		expect(again.needsModel).toBe(false);
@@ -189,8 +192,8 @@ describe("runtime", () => {
 		runtime.armLoop();
 		runtime.evalDecision({ title: "Loop", scope: "Keep going", strength: "explicit", decision: "accept", reason: "user asked" });
 		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
-		expect(drained.needsModel).toBe(true);
-		expect(drained.speech).toContain("hop limit");
+		expect(drained.needsModel).toBe(false);
+		expect(drained.speech).toContain("1 of 1 hops");
 		expect(drained.speech).not.toContain("still going");
 	});
 
@@ -211,6 +214,40 @@ describe("runtime", () => {
 		expect(calls).toBe(2);
 		expect(resumed.speech).toContain("Patched.");
 		expect(runtime.state.tickets[0]?.status).toBe("ended");
+	});
+
+	it("sends a reviewer mismatch back to the worker and speaks only the final receipt", async () => {
+		const seen: string[] = [];
+		let reviews = 0;
+		const { runtime, agents } = setup((task) => {
+			seen.push(task);
+			if (task.includes("acceptance criterion") || task.includes("Review the files again")) {
+				reviews += 1;
+				if (reviews === 1) {
+					return result('```pi-super\n{"report":"progress","summary":"Mismatch: test asserts World; mandate requires greet(\\"Ada\\")."}\n```');
+				}
+				return result('```pi-super\n{"report":"ready","summary":"test asserts greet(\\"Ada\\") === \\"Hello, Ada!\\"."}\n```');
+			}
+			return result("edited");
+		});
+		for (const name of ["scout", "planner", "worker", "reviewer"]) writeRole(agents, name);
+		runtime.armLoop();
+		runtime.evalDecision({
+			title: "Greet",
+			scope: 'greet("Ada") === "Hello, Ada!"',
+			strength: "explicit",
+			decision: "accept",
+			reason: "user asked",
+		});
+		const drained = await runtime.drain({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto", hasUI: true });
+		expect(reviews).toBe(2);
+		expect(seen.filter((task) => task.includes("Map the files"))).toHaveLength(1);
+		expect(seen.filter((task) => task.includes("Fix every mismatch"))).toHaveLength(1);
+		expect(seen.some((task) => task.includes("Mismatch: test asserts World"))).toBe(true);
+		expect(runtime.state.tickets[0]?.status).toBe("ended");
+		expect(runtime.state.tickets[0]?.hops).toBe(2);
+		expect(drained.speech).toContain('greet("Ada")');
+		expect(drained.speech).not.toContain("World");
 	});
 
 	it("blocks an ask-first assignment until the person answers", async () => {

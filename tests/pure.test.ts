@@ -9,7 +9,7 @@ import { buildSubagentArgs, resolvePiCommand } from "../extensions/pi-command.ts
 import { interpretOutput, parseReceipt } from "../extensions/receipt.ts";
 import { DEFAULT_RULES, loadRules, policyVersion, readRulesText } from "../extensions/rules.ts";
 import { factsFromEntries, nextId, parseFact, project } from "../extensions/state.ts";
-import { deliverySpeech, pipelineFor, routerTools } from "../extensions/router.ts";
+import { groundedSpeech, nextPhase, pipelineFor, routerTools } from "../extensions/router.ts";
 import { hopLimited, isAutoRunnable, selectTickets, ticketStage, widgetLines } from "../extensions/stage.ts";
 import { buildTask, parseSuperArgs } from "../extensions/task.ts";
 import type { SuperState, Ticket } from "../extensions/types.ts";
@@ -171,15 +171,31 @@ describe("gates and commands", () => {
 		]);
 		expect(pipelineFor("code", ["worker"]).map((step) => step.agent)).toEqual(["worker"]);
 		expect(pipelineFor("review", ["scout", "reviewer"]).map((step) => step.agent)).toEqual(["reviewer"]);
-		const speech = deliverySpeech({
-			results: ["t1 ready: done"],
-			question: "t2 needs you: Ship?",
+		expect(pipelineFor("code", ["scout", "planner", "worker", "reviewer"], "repair").map((step) => step.agent)).toEqual([
+			"worker",
+			"reviewer",
+		]);
+		expect(nextPhase({ assignment: { agent: "reviewer", reportKind: "progress" } })).toBe("repair");
+		expect(nextPhase({ assignment: { agent: "worker", reportKind: "progress" } })).toBe("initial");
+		const evidence = 'test asserts greet("World")';
+		const speech = groundedSpeech({
+			results: [{ id: "t1", kind: "ready", evidence }],
+			extraQuestions: 0,
+			capped: false,
+		});
+		expect(speech).toContain(evidence);
+		expect(speech).not.toContain("Ada");
+		expect(speech).not.toContain("Hello, Ada");
+		const asked = groundedSpeech({
+			results: [],
+			question: { id: "t2", title: "Ship?", evidence: "How should it ship?", options: ["PR", "Patch"] },
 			extraQuestions: 1,
 			capped: false,
 		});
-		expect(speech).toContain("t1 ready: done");
-		expect(speech).toContain("Ask this one question");
-		expect(speech).toContain("1 other question");
+		expect(asked).toContain("How should it ship?");
+		expect(asked).toContain("1. PR\n2. Patch");
+		expect(asked).toContain("1 other question");
+		expect(asked).not.toContain("production");
 	});
 
 	it("resolves the pi command the way the official subagent example does", () => {

@@ -1,7 +1,7 @@
 import { discoverAgents } from "./agents.ts";
 import { asksFirst, planModeTools } from "./gate.ts";
 import { interpretOutput, type Interpreted } from "./receipt.ts";
-import { deliverySpeech, pipelineFor, routerTools } from "./router.ts";
+import { groundedSpeech, nextPhase, pipelineFor, routerTools } from "./router.ts";
 import { DEFAULT_RULES, policyVersion, readRulesText } from "./rules.ts";
 import { addUsage, emptyUsage, mapPool, type SubagentRequest } from "./runner.ts";
 import { factsFromEntries, nextId, project, reduce } from "./state.ts";
@@ -370,29 +370,29 @@ export class SuperRuntime {
 			if (step === MAX_DRAIN_STEPS - 1 && still) capped = true;
 		}
 		const report = this.combine(pieces, request.hasUI === true);
-		const asks = pieces.filter((item) => item.needsPerson);
+		const asks = pieces.filter((item) => item.needsPerson && item.evidence.trim());
 		const hopTickets = this.state.tickets.filter((ticket) => hopLimited(ticket, this.rules.hopLimit));
-		const speech = deliverySpeech({
-			results: pieces.filter((item) => item.deliver && !item.needsPerson).map((item) => item.line),
-			question: asks[0]?.line,
+		const speech = groundedSpeech({
+			results: pieces
+				.filter((item) => item.deliver && !item.needsPerson)
+				.map((item) => ({ id: item.ticketId, kind: item.kind, evidence: item.evidence })),
+			question: asks[0]
+				? {
+						id: asks[0].ticketId,
+						title: asks[0].askTitle || asks[0].kind,
+						evidence: asks[0].evidence,
+						options: asks[0].askOptions ?? [],
+					}
+				: undefined,
 			extraQuestions: Math.max(0, this.state.tickets.filter((ticket) => ticket.attention).length - (asks[0] ? 1 : 0)),
 			capped,
 			hopNote:
 				hopTickets.length > 0 && pieces.length > 0
-					? hopTickets.map((ticket) => `${ticket.id} reached the hop limit (${this.rules.hopLimit}).`).join(" ")
+					? hopTickets.map((ticket) => `${ticket.id} reached ${ticket.hops} of ${this.rules.hopLimit} hops.`).join(" ")
 					: undefined,
 		});
-		if (!speech || this.rules.tell === "never") {
-			report.needsModel = false;
-			return report;
-		}
-		if (this.state.loopHops >= this.rules.hopLimit) {
-			report.needsModel = false;
-			return report;
-		}
-		this.apply({ type: "loop.continued" });
-		report.needsModel = true;
-		report.speech = speech;
+		report.needsModel = false;
+		report.speech = this.rules.tell === "never" ? undefined : speech;
 		return report;
 	}
 
@@ -458,12 +458,13 @@ export class SuperRuntime {
 
 	private agentNames(ticket: Ticket, request: DispatchRequest, agents: AgentConfig[]): string[] {
 		if (!this.usePipeline(request)) return [this.agentName(ticket, request)];
-		return pipelineFor(ticket.lane, agents.map((agent) => agent.name)).map((step) => step.agent);
+		return pipelineFor(ticket.lane, agents.map((agent) => agent.name), nextPhase(ticket)).map((step) => step.agent);
 	}
 
 	private async runOne(ticket: Ticket, request: DispatchRequest, agents: AgentConfig[]): Promise<Piece> {
 		if (!this.usePipeline(request)) return this.runTicket(ticket, request, agents);
-		return this.runSteps(ticket, request, agents, pipelineFor(ticket.lane, agents.map((agent) => agent.name)));
+		const names = agents.map((agent) => agent.name);
+		return this.runSteps(ticket, request, agents, pipelineFor(ticket.lane, names, nextPhase(ticket)));
 	}
 
 	private async runSteps(
@@ -525,9 +526,17 @@ export class SuperRuntime {
 					options: ["Continue", "Stop"],
 					key: slug(matched),
 				};
-				this.apply({ type: "attention.opened", ticketId: ticket.id, attention });
-				const summary = `${ticket.id} needs you: ${attention.title} — ${attention.text} (1. Continue 2. Stop)`;
-				return { ...piece(ticket.id, summary, true, false, emptyUsage(), ""), rawText: "", deliver: true };
+			this.apply({ type: "attention.opened", ticketId: ticket.id, attention });
+			const summary = `${ticket.id} needs you: ${attention.title}`;
+			return {
+				...piece(ticket.id, summary, true, false, emptyUsage(), ""),
+				rawText: "",
+				deliver: true,
+				evidence: attention.text,
+				kind: "ask",
+				askTitle: attention.title,
+				askOptions: attention.options,
+			};
 			}
 		}
 		if (countHop && ticket.hops >= this.rules.hopLimit && !request.ignoreHopLimit) {
@@ -536,12 +545,12 @@ export class SuperRuntime {
 		}
 		const assignmentId = nextId(this.state, "a");
 		const hops = countHop ? ticket.hops + 1 : ticket.hops;
-		this.apply({ type: "assignment.started", ticketId: ticket.id, assignmentId, agent: agent.name, hops });
 		const task = buildTask({
-			ticket: this.state.tickets.find((item) => item.id === ticket.id) ?? ticket,
+			ticket,
 			hopLimit: this.rules.hopLimit,
 			work,
 		});
+		this.apply({ type: "assignment.started", ticketId: ticket.id, assignmentId, agent: agent.name, hops });
 		let result: SubagentResult;
 		try {
 			result = await this.deps.runAgent({
@@ -583,6 +592,10 @@ export class SuperRuntime {
 			rawText: result.text,
 			deliver: Boolean(interpreted.ask) || interpreted.report === "ready" || failed,
 			stopped: failed || Boolean(interpreted.ask),
+			evidence: interpreted.ask?.text || interpreted.summary,
+			kind: interpreted.ask ? "ask" : interpreted.report,
+			askTitle: interpreted.ask?.title,
+			askOptions: interpreted.ask?.options,
 		};
 	}
 
@@ -736,18 +749,35 @@ export class SuperRuntime {
 }
 
 interface Piece {
+	ticketId: string;
 	line: string;
 	needsPerson: boolean;
-	/** Wake the Router: a result worth attention, a failure, or one question. */
+	/** Shown to the person. Ready, failed, or one question. Progress is not delivered. */
 	deliver: boolean;
 	failed: boolean;
 	usage: UsageStats;
 	rawText: string;
 	stopped: boolean;
+	/** Receipt text. The spoken summary copies this and nothing else. */
+	evidence: string;
+	kind: string;
+	askTitle?: string;
+	askOptions?: string[];
 }
 
 function piece(id: string, line: string, needsPerson: boolean, failed: boolean, usage: UsageStats, rawText: string): Piece {
-	return { line, needsPerson, deliver: needsPerson || failed, failed, usage, rawText, stopped: failed || needsPerson };
+	return {
+		ticketId: id,
+		line,
+		needsPerson,
+		deliver: needsPerson || failed,
+		failed,
+		usage,
+		rawText,
+		stopped: failed || needsPerson,
+		evidence: "",
+		kind: needsPerson ? "ask" : failed ? "failed" : "note",
+	};
 }
 
 function formatLine(ticketId: string, interpreted: Interpreted): string {

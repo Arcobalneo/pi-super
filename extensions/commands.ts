@@ -76,8 +76,9 @@ export function registerCommands(
 				const report = await runtime.drain(sessionRequest(ctx));
 				paint(ctx);
 				notify(ctx, report.notices);
-				if (report.needsModel && report.speech) send(pi, ctx, report.speech);
-				else ctx.ui.notify(result.message, "info");
+				if (report.speech) {
+					pi.sendMessage({ customType: "pi-super-result", content: report.speech, display: true }, { triggerTurn: false });
+				} else ctx.ui.notify(result.message, "info");
 				return;
 			}
 			if (parsed.cmd === "run") {

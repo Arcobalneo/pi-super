@@ -2,15 +2,16 @@
 
 装上之后，你只和当前这个 Pi 会话说话。它是 Router：接活、派工、在卡住时问一个具体问题、把值得看的结果说给你。改代码的是隔离的 worker 子进程。你不用盯着它们，也不用给它们发消息。
 
-After install, you only talk to the current Pi session. That session is the Router: it admits work, assigns it, asks one concrete question when blocked, and brings back a result worth your attention. Isolated worker processes do the coding. You do not talk to them.
+After install, you only talk to the current Pi session. That session is the Router: it admits work, assigns it, and asks one concrete question when blocked. The result you read is the worker receipt, not a paraphrase. Isolated worker processes do the coding. You do not talk to them.
 
 ## 它做什么 / What it does
 
 - **Router。** 主会话不再自己改代码。`edit`、`write`、`bash` 从主会话拿掉。你提出要做的事，Router 用 `super_eval` 接单，然后停下来。
 - **Workers。** 编码工单按 scout → planner → worker → reviewer 跑一轮。审查工单只跑 reviewer。仓库问题只跑只读 scout。它们是 `pi` 子进程，不加载扩展，没有回到你这里的通道。
 - **账本。** 工单状态是 admit → dispatch → running，然后落到 ready、ask、later 或 failed。子事件、跳数熔断和只追加的事实日志都在会话里。
-- **自动循环。** 能跑的工单自己跑完。主模型只在要问你、要交付结果、或熔断挡住的时候再醒一次。
-- **一个问题。** 需要人的时候只问一个，选项写在状态区。你直接回答，或用 `/super answer`。
+- **自动循环。** 能跑的工单自己跑完。交付的那段话就是回执原文，主模型不会再改写，所以它加不进回执里没有的检查。
+- **复查打回。** reviewer 对照授权里的每一条验收条件。对不上就 `progress`，worker 再改，reviewer 再查。
+- **一个问题。** 需要人的时候只问一个，标题、正文和选项都来自那张回执。你直接回答，或用 `/super answer`。
 
 不包含常驻云进程、飞书或 GitHub 触发器。那些是参考系统的部署方式，Pi 扩展接口做不到。对照见 [DESIGN.md](DESIGN.md)。
 
@@ -108,10 +109,14 @@ KIMI_KEY_FILE=/path/to/key.txt node scripts/accept.mjs
 
 ## 发布 / Release
 
-版本在 `package.json`。发布说明草稿在 [CHANGELOG.md](CHANGELOG.md)。npm 需要登录和 OTP 时，用 CHANGELOG 里的命令，不要把密钥写进仓库。
+v0.2.0 的目标是 GitHub Release，不是 npm。可粘贴的说明在 [CHANGELOG.md](CHANGELOG.md) 的 `GitHub Release v0.2.0` 一节。打 tag 和发 Release 在合并之后由人来做。
+
+`.github/workflows/ci.yml` 在 pull request 和 `main` 上跑 `npm run check`。`.github/workflows/release.yml` 在 `vX.Y.Z` tag 或已发布的 Release 上跑同样的检查。没有 `NPM_TOKEN` 时它跳过 `npm publish`，这一步不会让工作流失败。
+
+Install from git until npm publish is turned on:
 
 ```bash
-npm publish --access public
+pi install git:github.com/Arcobalneo/pi-super
 ```
 
 ## 许可 / License

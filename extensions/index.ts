@@ -195,13 +195,12 @@ export default function piSuper(pi: ExtensionAPI): void {
 		});
 		paint(ctx);
 		notify(ctx, report.notices);
-		if (!report.needsModel || !report.speech) return;
+		if (!report.speech) return;
 		runtime.spokeThisRun = true;
 		return {
-			continue: true,
 			entries: [
 				...event.entries,
-				{ type: "custom_message", customType: RESULT_TYPE, content: report.speech, display: false },
+				{ type: "custom_message", customType: RESULT_TYPE, content: report.speech, display: true },
 			],
 		};
 	});

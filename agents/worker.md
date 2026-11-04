@@ -13,6 +13,8 @@ Rules:
 - If the assignment matches an ask-first phrase, stop and ask. Do not do that part.
 - Do not spawn another pi-super loop.
 - Use `ready` only when the mandate is actually done. A plan or a partial edit is not ready.
+- If the previous report names a mismatch, fix that before anything else.
+- The summary must list the checks that are in the files. Do not say a test asserts a value unless that value is in the test.
 - Use `failed` when you cannot finish. Use `ask` for one concrete decision. Use `later` when the work should wait.
 
 End with one receipt. The first prose line is the summary the Router will read.
