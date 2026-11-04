@@ -1,0 +1,49 @@
+{
+  "name": "pi-super",
+  "version": "0.1.0",
+  "description": "Pi package that adds a superagent: plan tickets, dispatch subagents, and ask a person only when a decision is blocked.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-extension", "superagent"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "extensions",
+    "agents",
+    "skills",
+    "prompts",
+    "CHANGELOG.md",
+    "README.md",
+    "DESIGN.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": ["./extensions/index.ts"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"],
+    "changelogPath": "./CHANGELOG.md"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
+    "@types/node": "22.19.19",
+    "typebox": "1.3.27",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}
