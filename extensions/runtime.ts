@@ -791,7 +791,8 @@ export class SuperRuntime {
 			...made,
 			rawText: result.text,
 			deliver: Boolean(interpreted.ask) || interpreted.report === "ready" || interpreted.report === "blocked" || failed,
-			stopped: failed || Boolean(interpreted.ask),
+			// A blocked or failed report waits for the person, as in dsh-superagent-prototype src/core/model.ts waitsForPerson.
+			stopped: failed || interpreted.report === "blocked" || Boolean(interpreted.ask),
 			evidence: interpreted.ask?.text || interpreted.summary,
 			kind: interpreted.ask ? "ask" : interpreted.report,
 			askTitle: interpreted.ask?.title,

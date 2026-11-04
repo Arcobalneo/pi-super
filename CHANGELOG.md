@@ -27,6 +27,10 @@ A general redesign after studying the DeepSeek Harness post and three reference 
 - Asks carry `recommend` and `about`. A key already decided by the person is fed back instead of asked again.
 - `super_recall` reads an earlier ticket in full (chain of recall).
 - An intake question is returned as the Router's reply text and is not delivered a second time.
+- A `blocked` report from any lane step (scout, planner) stops the lane and waits for the person.
+- Checks that cannot fail (`true`, `echo …`, `… || true`) are rejected.
+- `scripts/accept.mjs` runs the five v0.3 scenarios with machine checks.
+- README section citing the design references.
 
 ### Removed
 

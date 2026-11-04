@@ -47,6 +47,12 @@ export async function verifyReady(input: VerifyInput): Promise<string[]> {
 	if (produces && input.changed.length === 0) {
 		out.push("The ready receipt lists no changed files. Name every file created or changed in changed, or report dropped if nothing was needed.");
 	}
+	// A check that cannot fail proves nothing (dsh-session-superagent docs/kb/gate-mutation-check.md, found-problem-but-exit-zero.md).
+	for (const check of input.checks) {
+		if (vacuous(check)) {
+			out.push(`Check \`${check}\` cannot fail, so it proves nothing. Use a command that exits non-zero when the requirement is not met.`);
+		}
+	}
 	const inGit = (await git(input.cwd, ["rev-parse", "--is-inside-work-tree"]))?.trim() === "true";
 	const status = inGit ? (await git(input.cwd, ["status", "--porcelain", "--untracked-files=all"])) ?? "" : "";
 	for (const file of input.changed) {
@@ -66,4 +72,11 @@ export async function verifyReady(input: VerifyInput): Promise<string[]> {
 		}
 	}
 	return out;
+}
+
+/** Commands that exit 0 whatever the tree holds. */
+export function vacuous(check: string): boolean {
+	const text = check.trim();
+	if (/^(true|:|exit 0|echo\b[^|;&]*|printf\b[^|;&]*)$/.test(text)) return true;
+	return /(\|\|\s*(true|:|exit 0)|;\s*(true|:|exit 0))\s*$/.test(text);
 }

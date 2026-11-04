@@ -53,7 +53,7 @@ function writeRole(dir: string, name: string): void {
 
 describe("runtime", () => {
 	it("accepts a ticket, runs a worker, and ends on ready", async () => {
-		const { runtime } = setup(() => result("Parser added.\n```pi-super\n{\"report\":\"ready\",\"checks\":[\"true\"],\"changed\":[\".\"],\"summary\":\"Parser added.\"}\n```"));
+		const { runtime } = setup(() => result("Parser added.\n```pi-super\n{\"report\":\"ready\",\"checks\":[\"test -e .\"],\"changed\":[\".\"],\"summary\":\"Parser added.\"}\n```"));
 		expect(runtime.evalDecision({ title: "Parser", scope: "Add a parser", strength: "explicit", decision: "accept", reason: "user asked" }).text).toMatch(/Accepted t1/);
 		const report = await runtime.dispatch({
 			cwd: "/tmp",
@@ -103,7 +103,7 @@ describe("runtime", () => {
 
 	it("does not create inferred tickets when the rules forbid them", async () => {
 		const { runtime, files, rulesPath } = setup(() =>
-			result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"done","events":[{"id":"e1","summary":"do more"}]}\n```'),
+			result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"done","events":[{"id":"e1","summary":"do more"}]}\n```'),
 		);
 		files.set(rulesPath, '{"acceptInferred":false}');
 		runtime.evalDecision({ title: "Once", scope: "Once", strength: "explicit", decision: "accept", reason: "user asked" });
@@ -123,7 +123,7 @@ describe("runtime", () => {
 	});
 
 	it("replays the ledger from session entries", async () => {
-		const first = setup(() => result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"done"}\n```'));
+		const first = setup(() => result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"done"}\n```'));
 		first.runtime.evalDecision({ title: "Replay", scope: "Work", strength: "explicit", decision: "accept", reason: "user asked" });
 		await first.runtime.dispatch({ cwd: "/tmp", agentScope: "trusted", projectTrusted: true, selector: "auto" });
 		const second = setup(() => result("nope"));
@@ -167,7 +167,7 @@ describe("runtime", () => {
 		const { runtime, agents } = setup((task) => {
 			calls += 1;
 			if (task.includes("Review the deliverable")) {
-				return result("Looks good.\n```pi-super\n{\"report\":\"ready\",\"checks\":[\"true\"],\"changed\":[\".\"],\"summary\":\"Greeting updated.\"}\n```");
+				return result("Looks good.\n```pi-super\n{\"report\":\"ready\",\"checks\":[\"test -e .\"],\"changed\":[\".\"],\"summary\":\"Greeting updated.\"}\n```");
 			}
 			return result(`step ${calls} notes`);
 		});
@@ -204,7 +204,7 @@ describe("runtime", () => {
 			if (calls === 1) {
 				return result('```pi-super\n{"report":"ask","summary":"Need a choice","ask":{"title":"Ship?","text":"How?","options":["PR","Patch"],"key":"ship"}}\n```');
 			}
-			return result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"Patched."}\n```');
+			return result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"Patched."}\n```');
 		});
 		runtime.armLoop();
 		runtime.evalDecision({ title: "Ship", scope: "Ship it", strength: "explicit", decision: "accept", reason: "user asked" });
@@ -229,7 +229,7 @@ describe("runtime", () => {
 				if (reviews === 1) {
 					return result('```pi-super\n{"report":"progress","summary":"Mismatch: test asserts World; mandate requires greet(\\"Ada\\")."}\n```');
 				}
-				return result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"test asserts greet(\\"Ada\\") === \\"Hello, Ada!\\"."}\n```');
+				return result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"test asserts greet(\\"Ada\\") === \\"Hello, Ada!\\"."}\n```');
 			}
 			return result("edited");
 		});
@@ -286,7 +286,7 @@ describe("runtime", () => {
 		);
 		const { runtime, files, rulesPath, agents } = setup(() =>
 			result(
-				'```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"All acceptance literals present in src/cents.test.ts"}\n```',
+				'```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"All acceptance literals present in src/cents.test.ts"}\n```',
 			),
 		);
 		writeRole(agents, "reviewer");
@@ -338,7 +338,7 @@ describe("runtime", () => {
 			].join("\n"),
 		);
 		const { runtime, agents } = setup(() =>
-			result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"formatCents(199) returns \\"$1.99\\"."}\n```'),
+			result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"formatCents(199) returns \\"$1.99\\"."}\n```'),
 		);
 		writeRole(agents, "reviewer");
 		runtime.evalDecision({
@@ -391,7 +391,7 @@ describe("runtime", () => {
 		let calls = 0;
 		const { runtime } = setup(() => {
 			calls += 1;
-			return result('```pi-super\n{"report":"ready","checks":["true"],"changed":["."],"summary":"removed"}\n```');
+			return result('```pi-super\n{"report":"ready","checks":["test -e ."],"changed":["."],"summary":"removed"}\n```');
 		});
 		runtime.evalDecision({
 			title: "Clean",

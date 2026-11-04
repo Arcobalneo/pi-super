@@ -54,7 +54,7 @@ function setup(script: (task: string, call: number, request: { session?: { dir: 
 	});
 	runtime.beginSession([], root);
 	runtime.armLoop();
-	return { runtime, tasks, sessions };
+	return { runtime, tasks, sessions, agents };
 }
 
 const drain = (runtime: SuperRuntime, cwd: string) =>
@@ -63,7 +63,7 @@ const drain = (runtime: SuperRuntime, cwd: string) =>
 describe("the person's words are the mandate", () => {
 	it("hands the verbatim request to the worker and keeps the Router note as background", async () => {
 		const dir = repo();
-		const { runtime, tasks } = setup(() => receipt({ report: "ready", summary: "ok", checks: ["true"], changed: ["a.txt"] }));
+		const { runtime, tasks } = setup(() => receipt({ report: "ready", summary: "ok", checks: ["test -e ."], changed: ["a.txt"] }));
 		writeFileSync(join(dir, "a.txt"), "b\n");
 		runtime.noteUserPrompt("Rename the button to Save. Keep the old CSS class.");
 		runtime.evalDecision({ title: "Button", note: "settings page", strength: "explicit", decision: "accept", reason: "asked" });
@@ -76,7 +76,7 @@ describe("the person's words are the mandate", () => {
 		const dir = repo();
 		const { runtime, tasks, sessions } = setup(() => {
 			writeFileSync(join(dir, "a.txt"), `v${Math.random()}\n`);
-			return receipt({ report: "ready", summary: "ok", checks: ["true"], changed: ["a.txt"] });
+			return receipt({ report: "ready", summary: "ok", checks: ["test -e ."], changed: ["a.txt"] });
 		});
 		runtime.noteUserPrompt("Write a.txt with a greeting.");
 		runtime.evalDecision({ title: "Greeting", strength: "explicit", decision: "accept", reason: "asked" });
@@ -95,7 +95,7 @@ describe("the person's words are the mandate", () => {
 describe("questions", () => {
 	it("asks at intake, replies with the question only once, and does not deliver it twice", async () => {
 		const dir = repo();
-		const { runtime, tasks } = setup(() => receipt({ report: "ready", summary: "ok", checks: ["true"], changed: ["a.txt"] }));
+		const { runtime, tasks } = setup(() => receipt({ report: "ready", summary: "ok", checks: ["test -e ."], changed: ["a.txt"] }));
 		runtime.noteUserPrompt("Pick a color for the theme; ask me first.");
 		const out = runtime.evalDecision({
 			title: "Theme",
@@ -116,7 +116,7 @@ describe("questions", () => {
 			if (call === 1) return receipt({ report: "ask", summary: "need", ask: { title: "Tone", text: "Formal?", options: ["yes", "no"], key: "tone" } });
 			if (call === 2) return receipt({ report: "ask", summary: "again", ask: { title: "Tone", text: "Formal, really?", options: ["yes", "no"], key: "tone" } });
 			writeFileSync(join(dir, "a.txt"), "formal\n");
-			return receipt({ report: "ready", summary: "ok", checks: ["true"], changed: ["a.txt"] });
+			return receipt({ report: "ready", summary: "ok", checks: ["test -e ."], changed: ["a.txt"] });
 		});
 		runtime.noteUserPrompt("Write a.txt.");
 		runtime.evalDecision({ title: "A", strength: "explicit", decision: "accept", reason: "asked" });
@@ -143,7 +143,7 @@ describe("grounded ready", () => {
 		const none = await verifyReady({ cwd: dir, lane: "code", checks: [], changed: [], request: "" });
 		expect(none.join(" ")).toMatch(/lists no checks/);
 		expect(none.join(" ")).toMatch(/lists no changed files/);
-		const untouched = await verifyReady({ cwd: dir, lane: "code", checks: ["true"], changed: ["b.txt"], request: "" });
+		const untouched = await verifyReady({ cwd: dir, lane: "code", checks: ["test -e ."], changed: ["b.txt"], request: "" });
 		expect(untouched.join(" ")).toMatch(/b.txt does not exist/);
 		expect(await verifyReady({ cwd: dir, lane: "review", checks: [], changed: [], request: "" })).toEqual([]);
 	});
@@ -184,7 +184,7 @@ describe("receipts", () => {
 		const { runtime, tasks } = setup((task) => {
 			if (task.includes("could not be read")) {
 				writeFileSync(join(dir, "a.txt"), "z\n");
-				return receipt({ report: "ready", summary: "rewritten", checks: ["true"], changed: ["a.txt"] });
+				return receipt({ report: "ready", summary: "rewritten", checks: ["test -e ."], changed: ["a.txt"] });
 			}
 			return res("I did it.");
 		});
@@ -205,7 +205,7 @@ describe("several tickets", () => {
 			order.push(id);
 			if (id === "t3") return receipt({ report: "failed", summary: "cannot" });
 			writeFileSync(join(dir, `${id}.txt`), id);
-			return receipt({ report: "ready", summary: `${id} ok`, checks: ["true"], changed: [`${id}.txt`] });
+			return receipt({ report: "ready", summary: `${id} ok`, checks: ["test -e ."], changed: [`${id}.txt`] });
 		});
 		runtime.noteUserPrompt("Do A, then B. Separately C, then D.");
 		runtime.evalDecision({ title: "A", strength: "explicit", decision: "accept", reason: "r" });
@@ -236,7 +236,7 @@ describe("split requests", () => {
 		const { runtime, tasks } = setup((task) => {
 			const id = /Ticket: (t\d+)/.exec(task)?.[1] ?? "x";
 			writeFileSync(join(dir, `${id}.txt`), id);
-			return receipt({ report: "ready", summary: id, checks: ["true"], changed: [`${id}.txt`] });
+			return receipt({ report: "ready", summary: id, checks: ["test -e ."], changed: [`${id}.txt`] });
 		});
 		runtime.noteUserPrompt("Build the CLI, then bump the version. Ask me which flag style.");
 		runtime.evalDecision({ title: "CLI", strength: "explicit", decision: "accept", reason: "r", ask: { title: "Flags", text: "Style?", options: ["--long", "-s"] } });
@@ -262,5 +262,37 @@ describe("router questions", () => {
 		expect(refused).toMatch(/^NOT RECORDED/);
 		expect(runtime.answer("t1", "I can't get that file right now.").ok).toBe(true);
 		expect(runtime.state.tickets[0]?.answers.at(-1)?.choice).toBe("I can't get that file right now.");
+	});
+});
+
+describe("blocked mid-lane", () => {
+	it("stops the lane when the scout reports blocked and waits for the person", async () => {
+		const dir = repo();
+		const seen: string[] = [];
+		const { runtime, agents } = setup((task) => {
+			seen.push(task);
+			return receipt({ report: "blocked", summary: "data/x.csv is missing" });
+		});
+		for (const name of ["scout", "planner", "reviewer"]) {
+			writeFileSync(join(agents, `${name}.md`), `---\nname: ${name}\ndescription: ${name}\n---\nGo.\n`);
+		}
+		runtime.noteUserPrompt("Summarize data/x.csv into report.md.");
+		runtime.evalDecision({ title: "X", strength: "explicit", decision: "accept", reason: "r", lane: "code" });
+		const out = await drain(runtime, dir);
+		expect(seen).toHaveLength(1);
+		expect(runtime.state.tickets[0]?.assignment?.reportKind).toBe("blocked");
+		expect(out.speech).toContain("data/x.csv is missing");
+	});
+});
+
+describe("checks that cannot fail", () => {
+	it("rejects vacuous checks", async () => {
+		const dir = repo();
+		writeFileSync(join(dir, "a.txt"), "x\n");
+		for (const check of ["true", "echo ok", "npm test || true", "grep -q x a.txt; exit 0"]) {
+			const out = await verifyReady({ cwd: dir, lane: "code", checks: [check], changed: ["a.txt"], request: "" });
+			expect(out.join(" ")).toMatch(/cannot fail/);
+		}
+		expect(await verifyReady({ cwd: dir, lane: "code", checks: ["grep -q x a.txt"], changed: ["a.txt"], request: "" })).toEqual([]);
 	});
 });

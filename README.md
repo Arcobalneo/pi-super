@@ -90,6 +90,31 @@ Router 工具：`super_eval`、`super_answer`、`super_report`、`super_status`�
 
 事件正文和回执里的 `summary` 放进 DATA。它们是资料，不是指令。
 
+## 设计参考 / Design references
+
+pi-super 的架构直接参考以下原帖和三个仓库。这里写明每一部分出自哪里；每一行写明了对应的文件。
+
+- 原帖：[DeepSeek Harness — superagent 设计](https://x.com/DeepSeekHarness/status/2116857257245987236)
+- [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)
+- [KKKKhazix/agent-autoloop](https://github.com/KKKKhazix/agent-autoloop)
+- [MYCF711/dsh-session-superagent](https://github.com/MYCF711/dsh-session-superagent)
+
+| pi-super 的部分 | 来源 |
+|---|---|
+| 两层结构：Router 只分发、不执行；worker 隔离、不与人对话 | 原帖；prototype `src/core/evals.ts`（main Session 只做决策） |
+| 不改写请求：ticket 原样保存原话 `inputs`，worker 从原话推导需求，Router 只写 note | 原帖"不改写"；prototype `Ticket.inputs` / `src/executor/dsh.ts` |
+| 路由决策 accept / attach / stop / ignore | prototype `src/core/evals.ts` `decide` / `decideEval` |
+| 报告状态 ready / progress / blocked / failed / dropped；blocked、failed 时停下等人（含 lane 中途的 scout/planner） | prototype `src/core/stage.ts`、`src/core/model.ts` `waitsForPerson` |
+| 每个 ticket、每个角色一个持久 session | prototype 每张工单一个 Executor Session；autoloop "续做接原会话" |
+| 回执写错只重写回执、不重做业务 | autoloop `docs/protocol.md`（"回执写错不重做业务"） |
+| ask 带 `key` / `recommend` / `about`，同 key 不重复问，已决定的回填 | autoloop `docs/protocol.md`（`ask` 的 `key` 范围） |
+| hop 上限默认 8 | autoloop 的 hop TTL |
+| grounded ready：必须给 `checks` 和 `changed`，kernel 重跑；拒绝不可能失败的检查 | session-superagent `docs/kb/acceptance-criteria.md`（完成标准可观测）、`gate-mutation-check.md`、`found-problem-but-exit-zero.md`，以及"交付 ≠ 行动" |
+| 入口问题只出现一次，Router 不自写追问 | 原帖"不复述"；prototype 由 worker 提出 human_action、Router 原样转达 |
+| `after` 依赖、`super_recall` 回看历史 ticket | 原帖 Chain of Recall；prototype ticket 关联 |
+
+没有采用的部分：多通道接入、云端隔离、Watchdog、全双工语音。这些属于部署层，不在 pi 扩展的范围内。
+
 ## 开发 / Develop
 
 ```bash
@@ -101,7 +126,7 @@ npm run check
 
 Host packages (`@earendil-works/pi-*`, `typebox`) are `peerDependencies` with `"*"`. They are also `devDependencies` so this repo can typecheck. Do not move them to `dependencies`.
 
-真实模型验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。验收脚本不包含密钥：
+真实模型验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。`scripts/accept.mjs` 跑 v0.3 的五个场景（ask-first、多文件重构、写作任务、拆分多 ticket、应 blocked 的任务），`ACCEPT_ONLY=ask,blocked` 只跑其中几个。脚本不包含密钥：
 
 ```bash
 KIMI_KEY_FILE=/path/to/key.txt node scripts/accept.mjs
